@@ -141,7 +141,8 @@ and submission format are only published when the competition opens on
     per-market summaries kept small and current.
   - Patterns: a ReAct loop per market (observe, search, read, assess, draft,
     submit, check receipt); plan-and-execute per cycle (pick markets, then
-    work them in order); parallel research across markets within one cycle;
+    work them in order); research is sequential within a cycle by design,
+    to respect free-tier rate limits and the shared model-call budget;
     human-in-the-loop approval for the first submissions, then autonomous
     operation within guardrails.
   - Guardrails: read-only web access plus Delphi submission only; no trading,

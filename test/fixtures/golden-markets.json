@@ -1,0 +1,134 @@
+{
+    "description": "Golden eval set: markets with known outcomes and the evidence that proves them. The offline eval test drafts and reviews each entry with the fake model and asserts the review passes using the same rubric as the judge. A draft citing a link outside its notes must fail (the deterministic sourced gate).",
+    "markets": [
+        {
+            "draft": {
+                "links": [
+                    {
+                        "title": "Zanara election announced",
+                        "url": "https://example.invalid/news/zanara-election"
+                    },
+                    {
+                        "title": "Opposition welcomes Zanara vote",
+                        "url": "https://example.invalid/news/zanara-opposition"
+                    }
+                ],
+                "note": "The Zanara Election Commission announced a general election for 31 December 2026 (2025-03-11); opposition parties welcomed the announcement."
+            },
+            "findings": [
+                {
+                    "claim": "The Zanara Election Commission announced a general election for 31 December 2026.",
+                    "date": "2025-03-11",
+                    "sourceTitle": "Zanara election announced",
+                    "sourceUrl": "https://example.invalid/news/zanara-election"
+                },
+                {
+                    "claim": "Zanara opposition parties welcomed the election announcement.",
+                    "date": "2025-03-12",
+                    "sourceTitle": "Opposition welcomes Zanara vote",
+                    "sourceUrl": "https://example.invalid/news/zanara-opposition"
+                }
+            ],
+            "id": "0x00000000000000000000000000000000000000a1",
+            "outcome": "Yes: the election was held on 31 December 2026.",
+            "question": "Will the Republic of Zanara hold a general election before 31 December 2026?"
+        },
+        {
+            "draft": {
+                "links": [
+                    {
+                        "title": "Meridian lift the Harbor Cup",
+                        "url": "https://example.invalid/sport/harbor-cup-final"
+                    },
+                    {
+                        "title": "Captain seals Harbor Cup for Meridian",
+                        "url": "https://example.invalid/sport/meridian-captain-goal"
+                    }
+                ],
+                "note": "FC Meridian won the 2026 Harbor Cup, beating Harbor United 2-1 in the final on 2026-06-14; the captain scored the winner in the 88th minute."
+            },
+            "findings": [
+                {
+                    "claim": "FC Meridian beat Harbor United 2-1 in the Harbor Cup final.",
+                    "date": "2026-06-14",
+                    "sourceTitle": "Meridian lift the Harbor Cup",
+                    "sourceUrl": "https://example.invalid/sport/harbor-cup-final"
+                },
+                {
+                    "claim": "FC Meridian's captain scored the winning goal in the 88th minute.",
+                    "date": "2026-06-14",
+                    "sourceTitle": "Captain seals Harbor Cup for Meridian",
+                    "sourceUrl": "https://example.invalid/sport/meridian-captain-goal"
+                }
+            ],
+            "id": "0x00000000000000000000000000000000000000a2",
+            "outcome": "Yes: FC Meridian beat Harbor United 2-1 in the final on 14 June 2026.",
+            "question": "Will FC Meridian win the 2026 Harbor Cup?"
+        },
+        {
+            "draft": {
+                "links": [
+                    {
+                        "title": "Solara upgrade goes live",
+                        "url": "https://example.invalid/crypto/solara-upgrade-live"
+                    },
+                    {
+                        "title": "Solara validators ready for upgrade",
+                        "url": "https://example.invalid/crypto/solara-validators-ready"
+                    }
+                ],
+                "note": "The Solara network upgrade activated at epoch 412 on 2026-06-28, with 94% of validator stake upgraded beforehand."
+            },
+            "findings": [
+                {
+                    "claim": "The Solara network upgrade activated at epoch 412.",
+                    "date": "2026-06-28",
+                    "sourceTitle": "Solara upgrade goes live",
+                    "sourceUrl": "https://example.invalid/crypto/solara-upgrade-live"
+                },
+                {
+                    "claim": "Solara validators upgraded 94% of stake before activation.",
+                    "date": "2026-06-27",
+                    "sourceTitle": "Solara validators ready for upgrade",
+                    "sourceUrl": "https://example.invalid/crypto/solara-validators-ready"
+                }
+            ],
+            "id": "0x00000000000000000000000000000000000000a3",
+            "outcome": "Yes: the upgrade activated at epoch 412 on 28 June 2026.",
+            "question": "Will the Solara network upgrade activate before 1 July 2026?"
+        },
+        {
+            "draft": {
+                "links": [
+                    {
+                        "title": "Aurora-9 lands on Europa",
+                        "url": "https://example.invalid/science/aurora-9-landing"
+                    },
+                    {
+                        "title": "First images from Europa's surface",
+                        "url": "https://example.invalid/science/aurora-9-first-images"
+                    }
+                ],
+                "note": "The Aurora-9 probe landed on Europa on 2026-11-02 and sent its first surface images hours later."
+            },
+            "findings": [
+                {
+                    "claim": "The Aurora-9 probe landed on Europa.",
+                    "date": "2026-11-02",
+                    "sourceTitle": "Aurora-9 lands on Europa",
+                    "sourceUrl": "https://example.invalid/science/aurora-9-landing"
+                },
+                {
+                    "claim": "Aurora-9 sent its first surface images hours after landing.",
+                    "date": "2026-11-02",
+                    "sourceTitle": "First images from Europa's surface",
+                    "sourceUrl": "https://example.invalid/science/aurora-9-first-images"
+                }
+            ],
+            "id": "0x00000000000000000000000000000000000000a4",
+            "outcome": "Yes: Aurora-9 landed on Europa on 2 November 2026.",
+            "question": "Will the Aurora-9 probe land on Europa before 31 December 2026?"
+        }
+    ],
+    "version": 1
+}
