@@ -328,4 +328,4 @@ docs/         Spec and architecture decision records
 ## Continuous integration
 
 GitHub Actions (`.github/workflows/ci.yml`) runs build, type check, tests,
-and lint on every push and pull request, on Node.js 20.x.
+and lint on every push and pull request, on Node.js 24.x.
