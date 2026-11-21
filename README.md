@@ -173,16 +173,13 @@ no endpoint, receipt shape, or leaderboard is guessed at.
   no reward/settlement query, and neither the runner nor the
   summary fetches settlement data. Ticket 08 wires the real
   settlement query and calls it from the runner or the summary.
-- **OpenRouter fallback in scheduled runs.** Scheduled runs
-  currently run WITHOUT the OpenRouter fallback: `run-cycle.sh`
-  fetches only the Gemini and Tavily credential surrogates, so a
-  Gemini outage kills the cycle (the interactive CLI falls back
-  to OpenRouter when `OPENROUTER_API_KEY` is set, but the
-  scheduled path has no key to fall back to). Adding it requires
-  connecting an OpenRouter credential in the vault and extending
-  `run-cycle.sh` to fetch its surrogate; the script carries a
-  clearly-marked optional block for that, disabled until the
-  connection exists.
+- **OpenRouter fallback in scheduled runs.** ENABLED 22 Nov 2026:
+  the OpenRouter credential is connected in the vault
+  (`custom.openrouter`) and verified with a live call to
+  `nvidia/nemotron-3.5-lightning:free`; `run-cycle.sh` fetches its
+  surrogate and passes `OPENROUTER_API_KEY` to the cycle, so a
+  Gemini outage no longer kills the cycle — the client falls back
+  to OpenRouter's free models once per failed call.
 - **Rank/leaderboard context.** The cycle report and final
   summary state that rank/leaderboard context is unavailable
   until the guide publishes; ticket 08 adds it once the

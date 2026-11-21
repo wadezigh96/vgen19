@@ -19,9 +19,9 @@
 #      agent builds once at install time; this is a safety net, not
 #      the normal path.
 #   4. Fetches FRESH credential surrogates from authd at run start
-#      (scripts/fetch-surrogate.py) and passes them as GEMINI_API_KEY
-#      and TAVILY_API_KEY in the child process environment only, for
-#      that run. The real keys live in the Muse Secure Vault and are
+#      (scripts/fetch-surrogate.py) and passes them as GEMINI_API_KEY,
+#      TAVILY_API_KEY and OPENROUTER_API_KEY in the child process
+#      environment only, for that run. The real keys live in the Muse Secure Vault and are
 #      NEVER in a file or an environment variable: the runtime swaps
 #      each hsurr: surrogate for the real key on egress to the
 #      registered host. Surrogates are never echoed, never written to
@@ -119,19 +119,15 @@ if ! TAVILY_SURROGATE="$(python3 "$SCRIPT_DIR/fetch-surrogate.py" custom.tavily)
   exit 1
 fi
 
-# OPTIONAL OpenRouter fallback (disabled): scheduled runs currently
-# run WITHOUT the OpenRouter fallback — a Gemini outage kills the
-# cycle. To add it, connect an OpenRouter credential in the vault
-# first, then uncomment this block, add
-# OPENROUTER_API_KEY="$OPENROUTER_SURROGATE" to the `node dist/cli.js
-# mine` invocation below, and unset OPENROUTER_SURROGATE with the
-# other surrogates. Do NOT uncomment it before the connection
-# exists: fetching a surrogate for a connection that does not exist
-# fails the run.
-# if ! OPENROUTER_SURROGATE="$(python3 "$SCRIPT_DIR/fetch-surrogate.py" custom.openrouter)"; then
-#   echo "error: failed to fetch the OpenRouter credential surrogate (custom.openrouter); the cycle did not run." >&2
-#   exit 1
-# fi
+# OpenRouter fallback (enabled 22 Nov 2026): the credential is
+# connected in the vault as custom.openrouter and verified with a
+# live call to nvidia/nemotron-3.5-lightning:free. The cycle falls
+# back to OpenRouter's free models once when a Gemini call fails;
+# without this, a Gemini outage kills the cycle.
+if ! OPENROUTER_SURROGATE="$(python3 "$SCRIPT_DIR/fetch-surrogate.py" custom.openrouter)"; then
+  echo "error: failed to fetch the OpenRouter credential surrogate (custom.openrouter); the cycle did not run." >&2
+  exit 1
+fi
 
 # Run the cycle under a hard 60-minute timeout: a backstop above the
 # runner's own per-cycle time budget (45 minutes by default), so a
@@ -145,10 +141,11 @@ if command -v timeout >/dev/null 2>&1; then
 fi
 set +e
 GEMINI_API_KEY="$GEMINI_SURROGATE" TAVILY_API_KEY="$TAVILY_SURROGATE" \
+  OPENROUTER_API_KEY="$OPENROUTER_SURROGATE" \
   "${TIMEOUT_CMD[@]}" node dist/cli.js mine --cycle "$CYCLE_ID" >"$LOG_FILE" 2>&1
 EXIT_CODE=$?
 set -e
-unset GEMINI_SURROGATE TAVILY_SURROGATE
+unset GEMINI_SURROGATE TAVILY_SURROGATE OPENROUTER_SURROGATE
 
 # Refresh the running summary (SPEC: one report per cycle plus a
 # running summary). Best-effort: it needs no credentials and its
