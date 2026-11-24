@@ -20,12 +20,23 @@
 #      the normal path.
 #   4. Fetches FRESH credential surrogates from authd at run start
 #      (scripts/fetch-surrogate.py) and passes them as GEMINI_API_KEY,
-#      TAVILY_API_KEY and OPENROUTER_API_KEY in the child process
-#      environment only, for that run. The real keys live in the Muse Secure Vault and are
-#      NEVER in a file or an environment variable: the runtime swaps
-#      each hsurr: surrogate for the real key on egress to the
-#      registered host. Surrogates are never echoed, never written to
-#      a file or a log, and unset after the run.
+#      TAVILY_API_KEY, OPENROUTER_API_KEY and DELPHI_API_ACCESS_KEY
+#      in the child process environment only, for that run. The real
+#      keys live in the Muse Secure Vault and are NEVER in a file or
+#      an environment variable: the runtime swaps each hsurr:
+#      surrogate for the real key on egress to the registered host.
+#      Surrogates are never echoed, never written to a file or a
+#      log, and unset after the run. A surrogate fetch failure
+#      means the cycle cannot run at all: the script exits non-zero
+#      naming the credential — except Delphi, which is skipped when
+#      VGEN19_DELPHI_STUB=true (see below).
+#      Stub mode: VGEN19_DELPHI_STUB=true skips the Delphi fetch
+#      and runs the cycle without a Delphi key, so the agent falls
+#      back to the stub adapter (fixture markets, canned receipts).
+#      Use it for dry-run/stub cycles only. A dry run
+#      (VGEN19_DRY_RUN=true) is NOT stub mode: a dry-run cycle with
+#      live reads is the normal pre-opening test, so it fetches the
+#      Delphi surrogate like a live run.
 #   5. Runs one mining cycle and captures its stdout/stderr to a
 #      per-run log file under <data-dir>/runs/<cycle-id>.log. The
 #      cycle runs under a hard 60-minute `timeout` (a backstop above
@@ -129,6 +140,30 @@ if ! OPENROUTER_SURROGATE="$(python3 "$SCRIPT_DIR/fetch-surrogate.py" custom.ope
   exit 1
 fi
 
+# Delphi (ticket 08): the live client needs the API key for reads
+# (X-API-Key) and evidence (Bearer). Stub mode skips the fetch: a
+# stub cycle works without it, and the agent falls back to the stub
+# adapter. A dry run is NOT stub mode (see the header note).
+DELPHI_SURROGATE=""
+if [ "${VGEN19_DELPHI_STUB:-}" != "true" ]; then
+  if ! DELPHI_SURROGATE="$(python3 "$SCRIPT_DIR/fetch-surrogate.py" custom.delphi)"; then
+    echo "error: failed to fetch the Delphi credential surrogate (custom.delphi); the cycle did not run." >&2
+    exit 1
+  fi
+fi
+
+# The credential environment for the cycle. Delphi is only included
+# when a surrogate was fetched: in stub mode the variable is left
+# out entirely, so the agent sees no key and uses the stub adapter.
+CYCLE_ENV=(
+  "GEMINI_API_KEY=$GEMINI_SURROGATE"
+  "TAVILY_API_KEY=$TAVILY_SURROGATE"
+  "OPENROUTER_API_KEY=$OPENROUTER_SURROGATE"
+)
+if [ -n "$DELPHI_SURROGATE" ]; then
+  CYCLE_ENV+=("DELPHI_API_ACCESS_KEY=$DELPHI_SURROGATE")
+fi
+
 # Run the cycle under a hard 60-minute timeout: a backstop above the
 # runner's own per-cycle time budget (45 minutes by default), so a
 # hung cycle cannot block the scheduler forever. When `timeout` is
@@ -140,12 +175,10 @@ if command -v timeout >/dev/null 2>&1; then
   TIMEOUT_CMD=(timeout 60m)
 fi
 set +e
-GEMINI_API_KEY="$GEMINI_SURROGATE" TAVILY_API_KEY="$TAVILY_SURROGATE" \
-  OPENROUTER_API_KEY="$OPENROUTER_SURROGATE" \
-  "${TIMEOUT_CMD[@]}" node dist/cli.js mine --cycle "$CYCLE_ID" >"$LOG_FILE" 2>&1
+env "${CYCLE_ENV[@]}" "${TIMEOUT_CMD[@]}" node dist/cli.js mine --cycle "$CYCLE_ID" >"$LOG_FILE" 2>&1
 EXIT_CODE=$?
 set -e
-unset GEMINI_SURROGATE TAVILY_SURROGATE OPENROUTER_SURROGATE
+unset GEMINI_SURROGATE TAVILY_SURROGATE OPENROUTER_SURROGATE DELPHI_SURROGATE
 
 # Refresh the running summary (SPEC: one report per cycle plus a
 # running summary). Best-effort: it needs no credentials and its

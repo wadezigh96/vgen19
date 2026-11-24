@@ -2,9 +2,9 @@
  * The `submit` and `approve` commands.
  *
  * `submit <draft-id>` sends one approved draft to Delphi through the
- * adapter (the stub until the live client lands in ticket 08),
- * prints the receipt (verdict, rationale, reward) and the new draft
- * status, and exits 0 only on an accepted submission. A refusal
+ * adapter (the live client when a key is configured, the stub
+ * otherwise), prints the receipt (verdict, rationale, reward) and
+ * the new draft status, and exits 0 only on an accepted submission. A refusal
  * (cap, gate, not-approved status) or a rejected receipt exits
  * non-zero with a clear message. The cycle id defaults to a fresh
  * `manual-<timestamp>` unless `--cycle <id>` is given.
@@ -21,7 +21,7 @@ import {
   type Vgen19Config,
 } from "../config.js";
 import type { DelphiAdapter } from "../delphi/adapter.js";
-import { createDelphiAdapter } from "../delphi/index.js";
+import { createConfiguredDelphiAdapter } from "../delphi/index.js";
 import type { EvidenceDraft } from "../draft/types.js";
 import { MemoryStore } from "../memory/store.js";
 import { approveDraft } from "../submit/approvals.js";
@@ -37,7 +37,7 @@ import {
 export interface SubmitCommandOverrides {
   /** Memory store, for tests. Defaults to the configured data dir. */
   store?: MemoryStore;
-  /** Delphi adapter, for tests. Defaults to the stub (ticket 08). */
+  /** Delphi adapter, for tests. Defaults to the configured adapter (live client with a key, stub without). */
   adapter?: DelphiAdapter;
   /** Config, for tests. Defaults to the process environment. */
   config?: Vgen19Config;
@@ -117,7 +117,12 @@ export function createSubmitCommand(
         const config = overrides.config ?? loadProcessConfig();
         const store =
           overrides.store ?? new MemoryStore(config.dataDir);
-        const adapter = overrides.adapter ?? createDelphiAdapter();
+        const adapter =
+          overrides.adapter ??
+          createConfiguredDelphiAdapter(primaryStrongModel(config), {
+            apiKey: config.delphiApiKey,
+            readApiKey: config.delphiReadApiKey,
+          });
         const now = overrides.now ?? (() => new Date());
 
         const draft = await store.loadDraft(draftId);

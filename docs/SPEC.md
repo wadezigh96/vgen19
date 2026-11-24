@@ -29,9 +29,12 @@ short report so Kames can see what was submitted and what it earned.
 Vgen19 is built on the seven-part agent architecture: Brain, Context, Tools,
 Memory, Patterns, Guardrails, and Evals. Each part maps to a concrete piece of
 the agent (see Implementation Decisions). The Delphi API integration is kept
-behind one adapter boundary, because the official endpoints, authentication,
-and submission format are only published when the competition opens on
-23 November; until then the agent builds against a stub and recorded fixtures.
+behind one adapter boundary. Ticket 08 (23 November 2026) wired the
+live client from the official Delphi SDK — reads from the Delphi
+API, evidence submission through the evidence API — with the stub
+and recorded fixtures kept as the no-key fallback. Live verification
+against the real API happens at the opening (24 November 00:00 WIB),
+when the competition host comes online.
 
 ## User Stories
 
@@ -161,10 +164,18 @@ and submission format are only published when the competition opens on
   (Tavily free tier); the fallback is a keyless web search. Search results are
   treated as leads; facts are only used after reading the source page.
 - The Delphi adapter is the only module that knows Delphi endpoints,
-  authentication, and the submission format. Until the official guide is
-  published on 23 November, it runs against a stub with recorded fixtures, and
-  the wiring lands as one contained change. The agent sends its name (Vgen19),
-  harness, and model with requests, per the competition instructions.
+  authentication, and the submission format. Ticket 08 wired the live
+  client from the official Delphi SDK (reads at
+  `https://delphi-api.gensyn.ai` with `X-API-Key` plus
+  `X-Delphi-Mode: competition`; evidence at
+  `https://agent-competition.gensyn.ai/v1` with `Authorization: Bearer`),
+  and the stub with recorded fixtures stays as the no-key fallback.
+  The agent sends its name (Vgen19), harness, and model with requests,
+  per the competition instructions. The receipt parser accepts both
+  the Vgen19 receipt shape and the real Delphi `Submission` shape;
+  each cycle refreshes the submissions still awaiting judgment
+  through `getSubmission`, so a judgment that lands after the submit
+  shows up in the next cycle's rewards.
 - Evidence drafts are validated against a strict shape (short note, links,
   optional files) before submission, and any draft that fails validation or
   self-review is kept for reporting instead of being sent.
@@ -213,13 +224,20 @@ and submission format are only published when the competition opens on
 ## Further Notes
 
 - Timeline: spec 20 November 2026; build 21-22 November; Delphi wiring on
-  23 November when the API key, official guide, and starter agent are
-  published; mining 23 November to 11 December; winners announced 16 December.
+  23 November from the official Delphi SDK (ticket 08); live verification
+  at the opening on 24 November 00:00 WIB; mining 24 November to
+  11 December; winners announced 16 December.
 - Open unknowns until 23 November: Delphi API base URL, authentication
   scheme, market-list endpoint, submission endpoint and payload format,
-  receipt format, and the official one-line prompt. The adapter boundary and
-  fixtures isolate all of them; the starter agent will be reviewed before the
-  wiring change lands.
+  receipt format, and the official one-line prompt. Ticket 08 resolved
+  the API unknowns from the SDK (base URLs, auth placements, endpoints,
+  receipt shape); what remains open is live verification against the
+  real API (the Bearer test, a market read, a dry-run cycle, one trial
+  submit), the read placement (see the placement note in
+  `src/delphi/live.ts`), the leaderboard endpoint, the field that
+  carries the earned settlement amount, and the competition site's
+  `/markets.json` (odds, reward pot, evidence cutoff), which the
+  live client does not fetch yet.
 - Human steps needed from Kames: create a Delphi account with the registered
   wallet and take the API key (23 November); create a free model API key; create
   a free search API key. Each step gets a short numbered guide when its time

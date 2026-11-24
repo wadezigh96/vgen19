@@ -4,12 +4,13 @@
  * This module (and only this module) knows Delphi endpoints,
  * authentication, and wire formats. Everything else in the agent talks
  * to Delphi through the `DelphiAdapter` interface below, so the live
- * wiring lands as one contained change (ticket 08) without touching
+ * wiring landed as one contained change (ticket 08) without touching
  * other modules.
  *
- * Until the official API is published on 23 November 2026, the stub
- * implementation in `stub.ts` stands in and returns recorded fixtures.
- * The stub mentions no endpoints, no authentication, and no formats.
+ * The live client lives in `live.ts`; the stub implementation in
+ * `stub.ts` stands in when no API key is configured and returns
+ * recorded fixtures. The stub mentions no endpoints, no
+ * authentication, and no formats.
  */
 
 import type { AgentIdentity, Market, MarketStatus } from "./types.js";
@@ -51,10 +52,10 @@ export interface GetMarketParams {
 }
 
 /**
- * The agent's view of Delphi. Ticket 06 adds submission (the stub
- * answers with a canned receipt until the live client lands in
- * ticket 08); market listing plus the health check is all ticket 03
- * needs.
+ * The agent's view of Delphi. Ticket 06 adds submission (the live
+ * client sends it to the evidence API; the stub answers with a
+ * canned receipt); market listing plus the health check is all
+ * ticket 03 needs.
  */
 export interface DelphiAdapter {
   /** The identity sent with every request (agent name, harness, model). */
@@ -79,4 +80,13 @@ export interface DelphiAdapter {
     draft: EvidenceDraft,
     meta: AgentIdentity,
   ): Promise<unknown>;
+  /**
+   * Read the current state of a submission from Delphi. Only the
+   * live client implements it; the stub does not, and callers must
+   * check for its presence. The outcome sync (ticket 08) uses it to
+   * refresh submissions that were still queued when they were sent.
+   * Like `submitEvidence`, it returns the raw value: callers parse
+   * it with `parseSubmissionReceipt` before trusting it.
+   */
+  getSubmission?(submissionId: string): Promise<unknown>;
 }

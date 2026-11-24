@@ -239,13 +239,15 @@ describe("parseSubmissionReceipt", () => {
     ).toThrow(ReceiptParseError);
   });
 
-  it("rejects an unknown top-level field, never silently accepting it", () => {
-    expect(() =>
-      parseSubmissionReceipt({ ...VALID_RECEIPT, bonus: 5 }),
-    ).toThrow(ReceiptParseError);
-    expect(() =>
-      parseSubmissionReceipt({ ...VALID_RECEIPT, bonus: 5 }),
-    ).toThrow(/bonus/);
+  it("tolerates an unknown top-level field: the API returns extra keys", () => {
+    // The SDK says extra keys stay readable on submissions, so the
+    // parser ignores fields it does not know instead of rejecting
+    // the whole receipt. Missing or malformed required fields still
+    // fail loudly (see the other tests in this block).
+    const receipt = parseSubmissionReceipt({ ...VALID_RECEIPT, bonus: 5 });
+
+    expect(receipt.submissionId).toBe("sub-1");
+    expect(receipt.verdict).toBe("accepted");
   });
 
   it("rejects a reward in the wrong currency", () => {
@@ -293,6 +295,247 @@ describe("parseSubmissionReceipt", () => {
   it("rejects a malformed submittedAt timestamp", () => {
     expect(() =>
       parseSubmissionReceipt({ ...VALID_RECEIPT, submittedAt: "soon" }),
+    ).toThrow(ReceiptParseError);
+  });
+});
+
+describe("parseSubmissionReceipt with the real Delphi Submission shape", () => {
+  const MARKET_ID = "0x0000000000000000000000000000000000000001";
+  const CONTEXT = { draftId: "draft-1", marketId: MARKET_ID };
+
+  /** One submission in the shape the evidence API returns (SDK). */
+  function submission(overrides: Record<string, unknown> = {}) {
+    const marketOverrides =
+      (overrides["market"] as Record<string, unknown> | undefined) ?? {};
+    const rest = { ...overrides };
+    delete rest["market"];
+    return {
+      agentId: "Vgen19",
+      createdAt: "2026-11-24T00:05:00.000Z",
+      files: [],
+      id: "sub-live-1",
+      links: ["https://example.invalid/source-1"],
+      markets: [
+        {
+          bounty: null,
+          marketAddress: MARKET_ID,
+          reason: null,
+          settlementUpTo: null,
+          status: "queued",
+          verdict: null,
+          ...marketOverrides,
+        },
+      ],
+      note: "Test evidence note.",
+      status: "queued",
+      ...rest,
+    };
+  }
+
+  it("maps a queued submission to an accepted receipt", () => {
+    const receipt = parseSubmissionReceipt(submission(), CONTEXT);
+
+    expect(receipt).toEqual({
+      draftId: "draft-1",
+      marketId: MARKET_ID,
+      submissionId: "sub-live-1",
+      submittedAt: "2026-11-24T00:05:00.000Z",
+      verdict: "accepted",
+    });
+  });
+
+  it("maps a judging submission to an accepted receipt", () => {
+    const receipt = parseSubmissionReceipt(
+      submission({ status: "judging" }),
+      CONTEXT,
+    );
+
+    expect(receipt.verdict).toBe("accepted");
+  });
+
+  it("maps a judged submission with a held bounty to a reward", () => {
+    const receipt = parseSubmissionReceipt(
+      submission({
+        market: {
+          bounty: { amount: "420000", state: "held" },
+          status: "judged",
+          verdict: "accepted",
+        },
+        status: "judged",
+      }),
+      CONTEXT,
+    );
+
+    expect(receipt.verdict).toBe("judged");
+    expect(receipt.reward).toEqual({ currency: "USDC.e", judgment: 0.42 });
+  });
+
+  it("maps a judged submission with a paid bounty to a reward", () => {
+    const receipt = parseSubmissionReceipt(
+      submission({
+        market: {
+          bounty: { amount: "1500000", state: "paid" },
+          status: "judged",
+        },
+        status: "judged",
+      }),
+      CONTEXT,
+    );
+
+    expect(receipt.reward).toEqual({ currency: "USDC.e", judgment: 1.5 });
+  });
+
+  it("records no reward for a voided or absent bounty", () => {
+    for (const bounty of [
+      null,
+      { amount: "420000", state: "voided" },
+      { amount: "0", state: "none" },
+    ]) {
+      const receipt = parseSubmissionReceipt(
+        submission({ market: { bounty }, status: "judged" }),
+        CONTEXT,
+      );
+      expect(receipt.verdict).toBe("judged");
+      expect(receipt.reward).toBeUndefined();
+    }
+  });
+
+  it("explains a zero payment through the zero-pay reason", () => {
+    const receipt = parseSubmissionReceipt(
+      submission({
+        market: {
+          bounty: { amount: "0", state: "none" },
+          zeroPayReason: "below_minimum",
+        },
+        status: "judged",
+      }),
+      CONTEXT,
+    );
+
+    expect(receipt.reward).toBeUndefined();
+    expect(receipt.rationale).toMatch(/below_minimum/);
+  });
+
+  it("maps rejected, failed, and unmatched submissions to rejected", () => {
+    for (const status of ["rejected", "failed", "unmatched"]) {
+      const receipt = parseSubmissionReceipt(
+        submission({
+          market: { reason: "Evidence does not move the forecaster." },
+          status,
+        }),
+        CONTEXT,
+      );
+      expect(receipt.verdict).toBe("rejected");
+      expect(receipt.rationale).toBe(
+        "Evidence does not move the forecaster.",
+      );
+    }
+  });
+
+  it("falls back to the submission code when no market reason exists", () => {
+    const receipt = parseSubmissionReceipt(
+      submission({ code: "duplicate_submission", status: "rejected" }),
+      CONTEXT,
+    );
+
+    expect(receipt.rationale).toBe("duplicate_submission");
+  });
+
+  it("tolerates the extra fields the API returns", () => {
+    const receipt = parseSubmissionReceipt(
+      submission({
+        canRetry: true,
+        judgingEstimateSeconds: 120,
+        retryAt: "2026-11-24T00:10:00.000Z",
+        someFutureField: { nested: true },
+      }),
+      CONTEXT,
+    );
+
+    expect(receipt.verdict).toBe("accepted");
+    expect(receipt.submissionId).toBe("sub-live-1");
+  });
+
+  it("matches the market address case-insensitively", () => {
+    const receipt = parseSubmissionReceipt(
+      submission({
+        market: { marketAddress: MARKET_ID.toUpperCase() },
+      }),
+      CONTEXT,
+    );
+
+    expect(receipt.marketId).toBe(MARKET_ID);
+  });
+
+  it("fails without draft and market context for a real submission", () => {
+    expect(() => parseSubmissionReceipt(submission())).toThrow(
+      ReceiptParseError,
+    );
+    expect(() => parseSubmissionReceipt(submission())).toThrow(/context/i);
+  });
+
+  it("fails when no market entry matches the submitted market", () => {
+    expect(() =>
+      parseSubmissionReceipt(
+        submission({
+          market: {
+            marketAddress: "0x0000000000000000000000000000000000000002",
+          },
+        }),
+        CONTEXT,
+      ),
+    ).toThrow(ReceiptParseError);
+    expect(() =>
+      parseSubmissionReceipt(
+        submission({
+          market: {
+            marketAddress: "0x0000000000000000000000000000000000000002",
+          },
+        }),
+        CONTEXT,
+      ),
+    ).toThrow(new RegExp(MARKET_ID));
+  });
+
+  it("fails on a missing id, timestamp, status, or markets list", () => {
+    for (const bad of [
+      submission({ id: undefined }),
+      submission({ createdAt: undefined }),
+      submission({ createdAt: "soon" }),
+      submission({ status: undefined }),
+      submission({ markets: undefined }),
+      submission({ markets: [] }),
+    ]) {
+      expect(() => parseSubmissionReceipt(bad, CONTEXT)).toThrow(
+        ReceiptParseError,
+      );
+    }
+  });
+
+  it("fails on an unknown submission status", () => {
+    expect(() =>
+      parseSubmissionReceipt(submission({ status: "mystery" }), CONTEXT),
+    ).toThrow(ReceiptParseError);
+  });
+
+  it("fails on a bounty amount that is not base units", () => {
+    expect(() =>
+      parseSubmissionReceipt(
+        submission({
+          market: { bounty: { amount: "lots", state: "held" } },
+          status: "judged",
+        }),
+        CONTEXT,
+      ),
+    ).toThrow(ReceiptParseError);
+    expect(() =>
+      parseSubmissionReceipt(
+        submission({
+          market: { bounty: { amount: "-5", state: "held" } },
+          status: "judged",
+        }),
+        CONTEXT,
+      ),
     ).toThrow(ReceiptParseError);
   });
 });

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { createDelphiAdapter } from "../src/delphi/index.js";
+import { LiveDelphiAdapter } from "../src/delphi/live.js";
 import { fixtureMarkets } from "../src/delphi/fixtures.js";
 import { StubDelphiAdapter } from "../src/delphi/stub.js";
 import type { EvidenceDraft } from "../src/draft/types.js";
@@ -261,5 +263,61 @@ describe("StubDelphiAdapter submitEvidence", () => {
     );
 
     expect(first.submissionId).not.toBe(second.submissionId);
+  });
+});
+
+describe("createDelphiAdapter", () => {
+  it("returns the stub when no key is configured", () => {
+    const adapter = createDelphiAdapter();
+
+    expect(adapter).toBeInstanceOf(StubDelphiAdapter);
+    expect(adapter.identity.model).toBe("stub");
+  });
+
+  it("returns the stub for a blank key", () => {
+    const adapter = createDelphiAdapter(undefined, { apiKey: "   " });
+
+    expect(adapter).toBeInstanceOf(StubDelphiAdapter);
+  });
+
+  it("returns the live client when a key is configured", () => {
+    const adapter = createDelphiAdapter(undefined, {
+      apiKey: "test-delphi-key",
+    });
+
+    expect(adapter).toBeInstanceOf(LiveDelphiAdapter);
+    expect(adapter.identity.agentName).toBe("Vgen19");
+  });
+
+  it("passes the read key through to the live client's reads", async () => {
+    const seenKeys: Array<string | null> = [];
+    const fetchFn = (async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      seenKeys.push(new Headers(init?.headers).get("X-API-Key"));
+      return new Response(JSON.stringify({ markets: [] }), {
+        headers: { "Content-Type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    const adapter = createDelphiAdapter(undefined, {
+      apiKey: "test-delphi-key",
+      fetch: fetchFn,
+      readApiKey: "read-only-key",
+    });
+
+    await adapter.listMarkets();
+
+    expect(seenKeys).toEqual(["read-only-key"]);
+  });
+
+  it("keeps the explicit identity on the live client", () => {
+    const adapter = createDelphiAdapter(
+      { agentName: "Vgen19", harness: "vgen19", model: "gemini-3.8-flash" },
+      { apiKey: "test-delphi-key" },
+    );
+
+    expect(adapter.identity.model).toBe("gemini-3.8-flash");
   });
 });

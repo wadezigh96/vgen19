@@ -7,9 +7,9 @@
  * near-future event (invented countries, companies, teams, and
  * tokens), every URL points at example.invalid (a host that can never
  * resolve), and no real personal data appears anywhere. They stand in
- * for the real market list until the official Delphi API is published
- * on 23 November 2026 (ticket 08 replaces the stub with the live
- * client).
+ * for the real market list in the stub adapter, which is used for
+ * tests and for stub cycles; the live client (ticket 08) reads the
+ * real list from the Delphi API when a key is configured.
  *
  * The competition extension (odds, reward pot, evidence cutoff) is
  * present on the open markets; the market awaiting settlement carries

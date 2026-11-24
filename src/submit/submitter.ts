@@ -59,7 +59,7 @@ import {
 export interface SubmitDraftDeps {
   /** Memory store: drafts, approvals, submissions, rewards, refusals. */
   store: MemoryStore;
-  /** Delphi adapter: the stub until the live client lands (ticket 08). */
+  /** Delphi adapter: the live client when a key is configured, the stub otherwise. */
   adapter: DelphiAdapter;
   /**
    * Id of the mining cycle sending this draft (ticket 07 owns
@@ -274,7 +274,13 @@ export async function submitDraft(
       harness: HARNESS,
       model: deps.model,
     });
-    receipt = parseSubmissionReceipt(rawReceipt);
+    // The context lets the parser accept the real Delphi
+    // `Submission` shape, which carries no draft id: it verifies
+    // the submission's market list contains the submitted market.
+    receipt = parseSubmissionReceipt(rawReceipt, {
+      draftId: draft.id,
+      marketId: draft.marketId,
+    });
     if (receipt.draftId !== draft.id || receipt.marketId !== draft.marketId) {
       throw new ReceiptParseError(
         `Receipt parse failed: the receipt names draft ${receipt.draftId} ` +

@@ -13,8 +13,22 @@ import { DEFAULT_TAVILY_SEARCH_ENDPOINT } from "./search/tavily.js";
 import { trimToUndefined as clean } from "./util.js";
 
 export interface Vgen19Config {
-  /** Delphi API key. Required only when live mode talks to Delphi. */
+  /**
+   * Delphi API key. Required only when live mode talks to Delphi.
+   * From `DELPHI_API_ACCESS_KEY` (the documented variable);
+   * `DELPHI_API_KEY` works as an alias. The same key authenticates
+   * both placements: Bearer for evidence calls, `X-API-Key` for
+   * reads — unless `delphiReadApiKey` is set.
+   */
   delphiApiKey?: string;
+  /**
+   * Optional separate key for Delphi reads only, from
+   * `DELPHI_API_READ_KEY`. The escape hatch for the read placement
+   * (see the placement note in `src/delphi/live.ts`): when set,
+   * reads send this key as `X-API-Key` while evidence calls still
+   * use `delphiApiKey` as Bearer.
+   */
+  delphiReadApiKey?: string;
   /** Google AI Studio (Gemini) API key, the default model provider. */
   geminiApiKey?: string;
   /** Fast Gemini model for triage and extraction. */
@@ -160,7 +174,9 @@ export function loadConfig(env: EnvRecord): Vgen19Config {
       true,
     ),
     dataDir: clean(env["VGEN19_DATA_DIR"]) ?? "./data",
-    delphiApiKey: clean(env["DELPHI_API_KEY"]),
+    delphiApiKey:
+      clean(env["DELPHI_API_ACCESS_KEY"]) ?? clean(env["DELPHI_API_KEY"]),
+    delphiReadApiKey: clean(env["DELPHI_API_READ_KEY"]),
     dryRun: parseBoolean(env["VGEN19_DRY_RUN"], "VGEN19_DRY_RUN", false),
     geminiApiKey: clean(env["GEMINI_API_KEY"]),
     geminiFastModel:

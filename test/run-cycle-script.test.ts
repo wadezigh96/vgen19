@@ -42,6 +42,17 @@ def dynamic_credential_entry(name, entry_name="access_token", **kwargs):
     return {"name": entry_name, "surrogate": "hsurr:test-fake-" + name}
 `;
 
+/** Stub authd module that fails for the Delphi credential only. */
+const FAILING_DELPHI_STUB_MODULE = `
+class DynamicCredentialError(RuntimeError):
+    pass
+
+def dynamic_credential_entry(name, entry_name="access_token", **kwargs):
+    if name == "custom.delphi":
+        raise DynamicCredentialError("authd unreachable in test")
+    return {"name": entry_name, "surrogate": "hsurr:test-fake-" + name}
+`;
+
 /**
  * A fake compiled CLI. Appends one JSON line per invocation (argv
  * plus the env vars it received) to the marker file, prints a line,
@@ -57,7 +68,9 @@ fs.appendFileSync(
   process.env.FAKE_CLI_MARKER,
   JSON.stringify({
     argv,
+    delphiApiKey: process.env.DELPHI_API_ACCESS_KEY ?? null,
     geminiApiKey: process.env.GEMINI_API_KEY ?? null,
+    openrouterApiKey: process.env.OPENROUTER_API_KEY ?? null,
     tavilyApiKey: process.env.TAVILY_API_KEY ?? null,
   }) + "\\n",
 );
@@ -232,7 +245,9 @@ interface RunIndexEntry {
 
 interface CliInvocation {
   argv: string[];
+  delphiApiKey: string | null;
   geminiApiKey: string | null;
+  openrouterApiKey: string | null;
   tavilyApiKey: string | null;
 }
 
@@ -268,7 +283,9 @@ describe("run-cycle.sh", () => {
     expect(result.code).toBe(0);
     const invocations = await readCliInvocations(fake.markerPath);
     const marker = invocations[0]!;
+    expect(marker.delphiApiKey).toBe("hsurr:test-fake-custom.delphi");
     expect(marker.geminiApiKey).toBe("hsurr:test-fake-custom.gemini");
+    expect(marker.openrouterApiKey).toBe("hsurr:test-fake-custom.openrouter");
     expect(marker.tavilyApiKey).toBe("hsurr:test-fake-custom.tavily");
     const log = await readOnlyLog(fake.dataDir);
     expect(log).toContain("fake cycle output");
@@ -314,7 +331,9 @@ describe("run-cycle.sh", () => {
       "failed",
       "ok",
     ]);
-  });
+    // Two full script runs (each fetches four surrogates and runs
+    // the CLI twice), so this test gets a longer timeout.
+  }, 15000);
 
   it("exits non-zero and does not run the cycle when a surrogate fetch fails", async () => {
     const fake = await makeFakeRepo({ authdModule: FAILING_GEMINI_STUB_MODULE });
@@ -326,6 +345,42 @@ describe("run-cycle.sh", () => {
     expect(result.stderr).toMatch(/did not run|not run/i);
     await expect(readFile(fake.markerPath, "utf-8")).rejects.toThrow();
     await expect(readRunIndex(fake.dataDir)).rejects.toThrow();
+  });
+
+  it("exits non-zero and does not run the cycle when the Delphi fetch fails", async () => {
+    const fake = await makeFakeRepo({ authdModule: FAILING_DELPHI_STUB_MODULE });
+
+    const result = await fake.runScript({ FAKE_CLI_EXIT_CODE: "0" });
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("custom.delphi");
+    expect(result.stderr).toMatch(/did not run|not run/i);
+    await expect(readFile(fake.markerPath, "utf-8")).rejects.toThrow();
+    await expect(readRunIndex(fake.dataDir)).rejects.toThrow();
+  });
+
+  it("runs a stub cycle without the Delphi fetch when VGEN19_DELPHI_STUB is set", async () => {
+    // The Delphi fetch would fail here; stub mode must skip it
+    // entirely and still run the cycle, without a Delphi key.
+    const fake = await makeFakeRepo({ authdModule: FAILING_DELPHI_STUB_MODULE });
+
+    const result = await fake.runScript({
+      FAKE_CLI_EXIT_CODE: "0",
+      VGEN19_DELPHI_STUB: "true",
+    });
+
+    expect(result.code).toBe(0);
+    const invocations = await readCliInvocations(fake.markerPath);
+    const marker = invocations[0]!;
+    expect(marker.delphiApiKey).toBeNull();
+    // The other providers are still fetched: stub mode only
+    // skips Delphi, it does not change the rest of the cycle.
+    expect(marker.geminiApiKey).toBe("hsurr:test-fake-custom.gemini");
+    expect(marker.tavilyApiKey).toBe("hsurr:test-fake-custom.tavily");
+    expect(marker.openrouterApiKey).toBe("hsurr:test-fake-custom.openrouter");
+    const entries = await readRunIndex(fake.dataDir);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.status).toBe("ok");
   });
 
   it("builds first when dist/cli.js is missing, then runs the cycle", async () => {
@@ -356,7 +411,9 @@ describe("run-cycle.sh", () => {
     const entries = await readRunIndex(fake.dataDir);
     expect(entries).toHaveLength(2);
     expect(entries[0]!.cycleId).not.toBe(entries[1]!.cycleId);
-  });
+    // Two full script runs (each fetches four surrogates and runs
+    // the CLI twice), so this test gets a longer timeout.
+  }, 15000);
 
   it("skips cleanly when another cycle holds the lock", async () => {
     const fake = await makeFakeRepo({});
@@ -409,7 +466,9 @@ describe("run-cycle.sh", () => {
     expect(invocations[0]!.argv[0]).toBe("mine");
     expect(invocations[1]!.argv).toEqual(["summary"]);
     // The summary is a local aggregation: it needs no API keys.
+    expect(invocations[1]!.delphiApiKey).toBeNull();
     expect(invocations[1]!.geminiApiKey).toBeNull();
+    expect(invocations[1]!.openrouterApiKey).toBeNull();
     expect(invocations[1]!.tavilyApiKey).toBeNull();
   });
 

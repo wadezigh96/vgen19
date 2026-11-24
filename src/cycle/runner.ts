@@ -2,7 +2,11 @@
  * The mining cycle runner: one command runs a complete mining cycle
  * (spec stories 13-16, 22, 25-27).
  *
- * Flow: sync markets (reusing the ticket-03 sync), pick targets
+ * Flow: sync markets (reusing the ticket-03 sync), refresh the
+ * outcomes of submissions still awaiting judgment (ticket 08: the
+ * live client re-reads them from Delphi, so a judgment that landed
+ * since the last cycle shows up in this cycle's rewards; the stub
+ * has no `getSubmission`, so stub cycles skip this), pick targets
  * (preferring newly opened markets), then for each target in order:
  * submit any approved draft left over from a previous cycle, run the
  * draft pipeline (research, draft, review, submit), and record the
@@ -59,6 +63,7 @@ import {
   ReceiptParseError,
   SubmissionRefusedError,
   SubmissionRejectedError,
+  syncSubmissionOutcomes,
   type SubmitDraftDeps,
 } from "../submit/index.js";
 import { errorMessage } from "../util.js";
@@ -87,7 +92,7 @@ import { TraceWriter } from "./trace.js";
 export interface CycleDeps {
   /** Memory store: markets, facts, notes, drafts, submissions, rewards. */
   store: MemoryStore;
-  /** Delphi adapter: the stub until the live client lands (ticket 08). */
+  /** Delphi adapter: the live client when a key is configured, the stub otherwise. */
   adapter: DelphiAdapter;
   /** Routed model client, used for extraction, drafting, and judging. */
   model: CycleModel;
@@ -272,6 +277,32 @@ export async function runCycle(deps: CycleDeps): Promise<CycleSummary> {
         updated: sync.updated,
       },
     });
+
+    // Refresh the outcomes of submissions still awaiting judgment
+    // (ticket 08). The stub has no `getSubmission`, so stub cycles
+    // skip this silently. A failed refresh is recorded in the
+    // cycle's errors, never fatal: a judgment poll must not abort
+    // a mining cycle, and the next cycle retries it.
+    if (typeof deps.adapter.getSubmission === "function") {
+      const outcomes = await syncSubmissionOutcomes(
+        deps.store,
+        deps.adapter.getSubmission.bind(deps.adapter),
+        { now },
+      );
+      trace.write("submission-outcomes", {
+        detail: {
+          checked: outcomes.checked,
+          failed: outcomes.failed.length,
+          unchanged: outcomes.unchanged,
+          updated: outcomes.updated,
+        },
+      });
+      for (const failure of outcomes.failed) {
+        errors.push(
+          `Outcome refresh failed for submission ${failure.submissionId}: ${failure.message}`,
+        );
+      }
+    }
 
     const allSubmissions = await deps.store.loadSubmissions();
     const submissionsByMarket: Record<string, number> = {};

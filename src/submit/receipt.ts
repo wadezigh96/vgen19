@@ -1,14 +1,35 @@
 /**
- * Strict receipt parsing: the raw value the Delphi adapter returns
- * is checked field by field before anything trusts it. Unknown or
- * missing fields are a parse error, never silently accepted, so a
- * changed receipt shape fails loudly instead of recording garbage.
+ * Receipt parsing: the raw value the Delphi adapter returns is
+ * checked field by field before anything trusts it. Missing or
+ * malformed required fields are a parse error, never silently
+ * accepted, so a changed receipt shape fails loudly instead of
+ * recording garbage.
  *
- * The receipt shape is Vgen19's own until the official guide is
- * published on 23 November 2026 (ticket 08): if the real API returns
- * extra fields, this parser is the one place that must learn them.
+ * Two shapes are accepted (ticket 08):
+ *
+ * - The Vgen19 receipt shape (`submissionId`, `draftId`,
+ *   `marketId`, `verdict`, `submittedAt`, optional `rationale` and
+ *   `reward`): what the stub and the test fakes return.
+ * - The real Delphi `Submission` shape (`id`, `createdAt`,
+ *   `status`, `markets[]`): what the evidence API returns. The
+ *   parser needs draft and market context for this shape, because
+ *   a submission carries no draft id — the caller passes the draft
+ *   it submitted, and the parser verifies the submission's market
+ *   list actually contains that market.
+ *
+ * Extra fields are TOLERATED on both shapes: the SDK says extra
+ * keys stay readable on submissions, so the parser ignores fields
+ * it does not know instead of rejecting the whole receipt. The
+ * reward object stays strict — it is Vgen19's own shape, and an
+ * unknown reward field is still a parse error.
+ *
+ * Bounty units: a judged submission's bounty `amount` is read as
+ * USDC.e base units (6 decimals) — see the note in
+ * `src/delphi/evidence.ts`.
  */
 
+import { baseUnitsToUsdcE } from "../delphi/evidence.js";
+import { errorMessage } from "../util.js";
 import {
   ReceiptParseError,
   type ReceiptReward,
@@ -17,16 +38,6 @@ import {
 } from "./types.js";
 
 export { ReceiptParseError } from "./types.js";
-
-const RECEIPT_KEYS = new Set([
-  "draftId",
-  "marketId",
-  "rationale",
-  "reward",
-  "submissionId",
-  "submittedAt",
-  "verdict",
-]);
 
 const REWARD_KEYS = new Set(["currency", "judgment", "settlement"]);
 
@@ -79,7 +90,7 @@ function parseReward(value: unknown): ReceiptReward {
   }
   // Both "USDC" and "USDC.e" parse: the glossary says rewards are
   // paid in USDC.e, and the stub and early receipts say "USDC".
-  // TODO(ticket 08): the real receipt format will confirm the currency.
+  // Real receipts (ticket 08) carry "USDC.e" — see `parseBounty`.
   if (
     typeof value["currency"] !== "string" ||
     !CURRENCIES.has(value["currency"])
@@ -102,22 +113,10 @@ function parseReward(value: unknown): ReceiptReward {
   return reward;
 }
 
-/**
- * Parse a raw receipt value into a `SubmissionReceipt`. Throws
- * `ReceiptParseError` naming the first violation when the value is
- * not an object, misses a required field, carries an unknown field,
- * has a verdict outside the union, or carries a malformed reward.
- */
-export function parseSubmissionReceipt(value: unknown): SubmissionReceipt {
-  if (!isRecord(value)) {
-    fail("receipt must be an object.");
-  }
-  for (const key of Object.keys(value)) {
-    if (!RECEIPT_KEYS.has(key)) {
-      fail(`unknown receipt field "${key}".`);
-    }
-  }
-  const verdict = requireNonEmptyString(value, "verdict");
+function parseVgen19Receipt(
+  record: Record<string, unknown>,
+): SubmissionReceipt {
+  const verdict = requireNonEmptyString(record, "verdict");
   if (!VERDICTS.has(verdict)) {
     fail(
       `"verdict" must be one of "accepted", "rejected", "judged", ` +
@@ -125,21 +124,178 @@ export function parseSubmissionReceipt(value: unknown): SubmissionReceipt {
     );
   }
   const receipt: SubmissionReceipt = {
-    draftId: requireNonEmptyString(value, "draftId"),
-    marketId: requireNonEmptyString(value, "marketId"),
-    submissionId: requireNonEmptyString(value, "submissionId"),
-    submittedAt: requireValidTimestamp(value, "submittedAt"),
+    draftId: requireNonEmptyString(record, "draftId"),
+    marketId: requireNonEmptyString(record, "marketId"),
+    submissionId: requireNonEmptyString(record, "submissionId"),
+    submittedAt: requireValidTimestamp(record, "submittedAt"),
     verdict: verdict as ReceiptVerdict,
   };
-  const rationale = value["rationale"];
+  const rationale = record["rationale"];
   if (rationale !== undefined) {
     if (typeof rationale !== "string") {
       fail('"rationale" must be a string.');
     }
     receipt.rationale = rationale;
   }
-  if (value["reward"] !== undefined) {
-    receipt.reward = parseReward(value["reward"]);
+  if (record["reward"] !== undefined) {
+    receipt.reward = parseReward(record["reward"]);
   }
   return receipt;
+}
+
+/**
+ * Map a Delphi submission status onto a receipt verdict. `queued`
+ * and `judging` both mean Delphi took the evidence and has not
+ * decided yet, so they map to `accepted` — the outcome sync
+ * refreshes them once Delphi judges. `failed` and `unmatched` are
+ * terminal without a judgment, so they map to `rejected` like a
+ * rejection does.
+ */
+function submissionStatusToVerdict(status: unknown): ReceiptVerdict {
+  switch (status) {
+    case "judged":
+      return "judged";
+    case "rejected":
+    case "failed":
+    case "unmatched":
+      return "rejected";
+    case "queued":
+    case "judging":
+      return "accepted";
+    default:
+      fail(`unknown Delphi submission status: ${String(status)}.`);
+  }
+}
+
+/**
+ * Map a submission market entry's bounty onto a receipt reward.
+ * `none` and `voided` mean no reward was earned; `held` and `paid`
+ * carry the judgment reward in USDC.e base units. A malformed
+ * amount fails loudly: a reward must never be silently dropped.
+ */
+function parseBounty(value: unknown): ReceiptReward | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    fail('"bounty" must be an object or null.');
+  }
+  const state = value["state"];
+  if (state === "none" || state === "voided") {
+    return undefined;
+  }
+  if (state !== "held" && state !== "paid") {
+    fail(`unknown bounty state: ${String(state)}.`);
+  }
+  const amount = value["amount"];
+  if (typeof amount !== "string") {
+    fail('"bounty.amount" must be a string in USDC.e base units.');
+  }
+  try {
+    return { currency: "USDC.e", judgment: baseUnitsToUsdcE(amount) };
+  } catch (error) {
+    fail(errorMessage(error));
+  }
+}
+
+function parseDelphiSubmission(
+  record: Record<string, unknown>,
+  context: ReceiptContext | undefined,
+): SubmissionReceipt {
+  if (context === undefined) {
+    fail(
+      "a Delphi submission receipt needs draft and market context: " +
+        "the submission itself carries no draft id.",
+    );
+  }
+  const submissionId = requireNonEmptyString(record, "id");
+  const submittedAt = requireValidTimestamp(record, "createdAt");
+  const verdict = submissionStatusToVerdict(record["status"]);
+  const markets = record["markets"];
+  if (!Array.isArray(markets) || markets.length === 0) {
+    fail(`submission ${submissionId} has no market entries.`);
+  }
+  const entry = markets.find((candidate) => {
+    if (!isRecord(candidate)) {
+      return false;
+    }
+    const address = candidate["marketAddress"];
+    return (
+      typeof address === "string" &&
+      address.toLowerCase() === context.marketId.toLowerCase()
+    );
+  });
+  if (entry === undefined || !isRecord(entry)) {
+    fail(
+      `submission ${submissionId} has no market entry for ${context.marketId}.`,
+    );
+  }
+  const reason = entry["reason"];
+  const code = record["code"];
+  const zeroPayReason = entry["zeroPayReason"];
+  let rationale: string | undefined;
+  if (typeof reason === "string" && reason !== "") {
+    rationale = reason;
+  } else if (typeof code === "string" && code !== "") {
+    rationale = code;
+  } else if (
+    typeof zeroPayReason === "string" &&
+    zeroPayReason !== ""
+  ) {
+    rationale = `Zero payment: ${zeroPayReason}.`;
+  }
+  const reward = parseBounty(entry["bounty"]);
+  return {
+    ...(rationale !== undefined ? { rationale } : {}),
+    ...(reward !== undefined ? { reward } : {}),
+    draftId: context.draftId,
+    marketId: context.marketId,
+    submissionId,
+    submittedAt,
+    verdict,
+  };
+}
+
+/**
+ * The draft and market a receipt belongs to. Required when the raw
+ * value is a real Delphi submission (it carries no draft id);
+ * ignored for the Vgen19 receipt shape (it carries both ids, and
+ * the submitter checks them against the draft).
+ */
+export interface ReceiptContext {
+  draftId: string;
+  marketId: string;
+}
+
+/**
+ * Parse a raw receipt value into a `SubmissionReceipt`. Accepts
+ * both the Vgen19 receipt shape and the real Delphi `Submission`
+ * shape; extra fields are tolerated on both. Throws
+ * `ReceiptParseError` naming the first violation when the value is
+ * not an object, misses a required field, has a verdict or status
+ * outside the known unions, carries a malformed reward, or (for a
+ * real submission) has no market entry for the submitted market.
+ */
+export function parseSubmissionReceipt(
+  value: unknown,
+  context?: ReceiptContext,
+): SubmissionReceipt {
+  if (!isRecord(value)) {
+    fail("receipt must be an object.");
+  }
+  if (typeof value["submissionId"] === "string") {
+    return parseVgen19Receipt(value);
+  }
+  if (
+    typeof value["id"] === "string" &&
+    typeof value["status"] === "string" &&
+    Array.isArray(value["markets"])
+  ) {
+    return parseDelphiSubmission(value, context);
+  }
+  fail(
+    "receipt is neither the Vgen19 receipt shape nor a Delphi " +
+      "submission: it has neither `submissionId` nor " +
+      "(`id`, `status`, `markets`).",
+  );
 }

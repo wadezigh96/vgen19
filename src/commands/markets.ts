@@ -7,8 +7,8 @@
  */
 
 import type { CliCommand } from "../cli.js";
-import { loadProcessConfig } from "../config.js";
-import { createDelphiAdapter } from "../delphi/index.js";
+import { loadProcessConfig, primaryStrongModel } from "../config.js";
+import { createConfiguredDelphiAdapter } from "../delphi/index.js";
 import { syncMarkets } from "../delphi/sync.js";
 import { marketCloseTime, type Market } from "../delphi/types.js";
 import { MemoryStore } from "../memory/store.js";
@@ -44,7 +44,13 @@ export const marketsCommand: CliCommand = {
   async run(args, output) {
     try {
       const config = loadProcessConfig();
-      const adapter = createDelphiAdapter();
+      const adapter = createConfiguredDelphiAdapter(
+        primaryStrongModel(config),
+        {
+          apiKey: config.delphiApiKey,
+          readApiKey: config.delphiReadApiKey,
+        },
+      );
       const store = new MemoryStore(config.dataDir);
 
       const result = await syncMarkets(adapter, store);

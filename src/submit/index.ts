@@ -3,15 +3,23 @@
  * enforces the human approval gate and the submission caps, and
  * records rewards per submission.
  *
- * Until the live Delphi client lands (ticket 08), the adapter stub
- * answers with a canned receipt; the submitter, the gate, the caps,
- * and the recording all work the same against the stub.
+ * The live client (ticket 08) sends real evidence to the evidence
+ * API; the adapter stub answers with a canned receipt. The
+ * submitter, the gate, the caps, and the recording all work the
+ * same against both.
  */
 
 export { approveDraft, type ApproveDraftOptions } from "./approvals.js";
 export {
+  syncSubmissionOutcomes,
+  type SubmissionOutcomeFailure,
+  type SubmissionOutcomeSyncResult,
+  type SyncSubmissionOutcomesOptions,
+} from "./outcomes.js";
+export {
   parseSubmissionReceipt,
   ReceiptParseError,
+  type ReceiptContext,
 } from "./receipt.js";
 export {
   recordSettlementReward,

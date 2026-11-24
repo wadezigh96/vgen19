@@ -21,8 +21,9 @@ export type ReceiptVerdict = "accepted" | "rejected" | "judged";
 /**
  * The currency a reward is paid in. The glossary says rewards are
  * paid in USDC.e (the bridged USDC token); "USDC" is accepted too
- * because the stub and early receipts use it.
- * TODO(ticket 08): the real receipt format will confirm the currency.
+ * because the stub and early receipts use it. Real receipts
+ * (ticket 08) carry "USDC.e": the bounty amount is USDC.e base
+ * units — see `src/delphi/evidence.ts`.
  */
 export type RewardCurrency = "USDC" | "USDC.e";
 
@@ -38,9 +39,11 @@ export interface ReceiptReward {
 
 /**
  * The receipt Delphi returns for a submission: the verdict, the
- * rationale, and the reward, usually within minutes. Parsed strictly
- * by `parseSubmissionReceipt`: unknown or missing fields are a parse
- * error, never silently accepted.
+ * rationale, and the reward, usually within minutes. Parsed by
+ * `parseSubmissionReceipt`: missing or malformed required fields
+ * are a parse error, never silently accepted, while extra fields
+ * the API returns are tolerated (the SDK says extra keys stay
+ * readable on submissions).
  */
 export interface SubmissionReceipt {
   /** Id Delphi assigned to the submission. */

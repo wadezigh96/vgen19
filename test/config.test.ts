@@ -11,6 +11,7 @@ describe("loadConfig", () => {
     expect(config.dryRun).toBe(false);
     expect(config.reviewPassThreshold).toBe(0.7);
     expect(config.delphiApiKey).toBeUndefined();
+    expect(config.delphiReadApiKey).toBeUndefined();
     expect(config.geminiApiKey).toBeUndefined();
     expect(config.openrouterApiKey).toBeUndefined();
     expect(config.tavilyApiKey).toBeUndefined();
@@ -35,7 +36,8 @@ describe("loadConfig", () => {
 
   it("reads API keys and limits from the environment", () => {
     const config = loadConfig({
-      DELPHI_API_KEY: "delphi-key",
+      DELPHI_API_ACCESS_KEY: "delphi-key",
+      DELPHI_API_READ_KEY: "delphi-read-key",
       GEMINI_API_KEY: "gemini-key",
       GEMINI_FAST_MODEL: "gemini-fast-custom",
       GEMINI_STRONG_MODEL: "gemini-strong-custom",
@@ -59,6 +61,7 @@ describe("loadConfig", () => {
     });
 
     expect(config.delphiApiKey).toBe("delphi-key");
+    expect(config.delphiReadApiKey).toBe("delphi-read-key");
     expect(config.geminiApiKey).toBe("gemini-key");
     expect(config.geminiFastModel).toBe("gemini-fast-custom");
     expect(config.geminiStrongModel).toBe("gemini-strong-custom");
@@ -83,13 +86,30 @@ describe("loadConfig", () => {
     expect(config.reviewPassThreshold).toBe(0.85);
   });
 
+  it("accepts DELPHI_API_KEY as an alias for the Delphi key", () => {
+    const config = loadConfig({ DELPHI_API_KEY: "delphi-key-alias" });
+
+    expect(config.delphiApiKey).toBe("delphi-key-alias");
+  });
+
+  it("prefers DELPHI_API_ACCESS_KEY over the DELPHI_API_KEY alias", () => {
+    const config = loadConfig({
+      DELPHI_API_ACCESS_KEY: "delphi-key-primary",
+      DELPHI_API_KEY: "delphi-key-alias",
+    });
+
+    expect(config.delphiApiKey).toBe("delphi-key-primary");
+  });
+
   it("treats blank values as unset", () => {
     const config = loadConfig({
-      DELPHI_API_KEY: "   ",
+      DELPHI_API_ACCESS_KEY: "   ",
+      DELPHI_API_READ_KEY: "  ",
       VGEN19_DATA_DIR: "",
     });
 
     expect(config.delphiApiKey).toBeUndefined();
+    expect(config.delphiReadApiKey).toBeUndefined();
     expect(config.dataDir).toBe("./data");
   });
 

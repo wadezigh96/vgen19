@@ -92,9 +92,9 @@ export class StubDelphiAdapter implements DelphiAdapter {
 
   /**
    * Record the submission and return a canned accepted receipt. No
-   * network, no key, no endpoints: the live client lands in ticket 08
-   * behind the plug-in point in `createDelphiAdapter`. The canned
-   * receipt carries no reward; rewards are exercised through fakes.
+   * network, no key, no endpoints: the live client lives behind the
+   * plug-in point in `createDelphiAdapter`. The canned receipt
+   * carries no reward; rewards are exercised through fakes.
    */
   async submitEvidence(
     draft: EvidenceDraft,
@@ -107,7 +107,7 @@ export class StubDelphiAdapter implements DelphiAdapter {
       draftId: draft.id,
       marketId: draft.marketId,
       rationale:
-        "Stub receipt: accepted (no live Delphi API until 23 November 2026).",
+        "Stub receipt: accepted (no live Delphi call — the stub never touches the network).",
       submissionId: `stub-submission-${this.submissionCounter}`,
       submittedAt: new Date().toISOString(),
       verdict: "accepted",

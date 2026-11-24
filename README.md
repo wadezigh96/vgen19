@@ -16,11 +16,15 @@ paid API calls, no trading, no wallet signing, no transactions. See
 
 > Status: the agent is built — market sync, research, drafting with
 > self-review, submission with receipts, human approval, cycle and
-> final-summary reports, and scheduled runs all work against a stub
-> Delphi adapter. The real Delphi API integration lands as one
-> contained change on 23 November 2026, when the competition opens
-> and the official API key, guide, and starter agent are published.
-> Until then, no live Delphi integration exists yet.
+> final-summary reports, and scheduled runs all work. Ticket 08
+> (23 November 2026) wired the live Delphi client: reads from the
+> Delphi API and evidence submission through the evidence API, with
+> the stub adapter kept as the no-key fallback. The live wiring is
+> implemented and tested against mocked responses shaped by the
+> official Delphi SDK, but it has NOT been verified against the live
+> API yet — that happens at the opening (24 November 2026 00:00 WIB),
+> when the competition host comes online. See "Live Delphi client"
+> below for what is verified and what is still open.
 
 ## Quick start
 
@@ -63,11 +67,12 @@ npm run dev -- summary --json  # same, as machine-readable JSON
 
 Running with no arguments prints help and exits 0. An unknown command prints
 help to stderr and exits non-zero. The `markets` command syncs the
-competition market list through the Delphi adapter (a stub with recorded
-fixtures until the official API is published on 23 November 2026) into the
-memory store (`markets.json` under the data dir), then lists the stored
-markets with odds, close time, evidence cutoff, and reward pot. Re-running
-it updates changed markets without duplicating them.
+competition market list through the Delphi adapter (the live client
+when a Delphi API key is configured, the stub with recorded fixtures
+otherwise) into the memory store (`markets.json` under the data dir),
+then lists the stored markets with odds, close time, evidence cutoff,
+and reward pot. Re-running it updates changed markets without
+duplicating them.
 
 The `research` command researches one stored market: it derives up to 3 search
 queries from the market question, searches the web, reads the top source
@@ -86,9 +91,13 @@ criteria in parsed metadata, and has a status of `open`,
 shown is the metadata end date, falling back to the scheduled settlement
 time when the metadata has no end date. Odds, evidence cutoff, and reward
 pot are competition-2-only fields that the public Delphi docs do not
-define; they live in an optional extension on the market, populated by
-the competition endpoints in ticket 08, and show as `n/a` when a market
-carries none.
+define; they live in an optional extension on the market, and show
+as `n/a` when a market carries none. The reads API does not return
+them: the SDK's starter agent reads them from the competition site's
+`/markets.json`, which this client does not fetch yet — so live
+markets carry no odds, cutoff, or pot until that wiring lands, and
+picking works without them (it just cannot prefer markets by odds
+or skip past-cutoff markets).
 
 The `mine` command runs one complete mining cycle (sync markets, pick
 targets, research, draft, submit, read receipts, report) and prints a
@@ -125,9 +134,12 @@ installs it (for example as Muse cron jobs) from
 The run script resolves the repo root, builds only if `dist/cli.js`
 is missing (the main agent builds once at install time), fetches
 fresh credential surrogates from authd at run start and passes them
-as `GEMINI_API_KEY` / `TAVILY_API_KEY` to the agent process for that
-run only, then runs one cycle and captures its output to a per-run
-log under `<data-dir>/runs/<cycle-id>.log`. The real keys live in
+as `GEMINI_API_KEY` / `TAVILY_API_KEY` / `OPENROUTER_API_KEY` /
+`DELPHI_API_ACCESS_KEY` to the agent process for that run only
+(the Delphi fetch is skipped when `VGEN19_DELPHI_STUB=true`, so a
+stub cycle runs without a Delphi key), then runs one cycle and
+captures its output to a per-run log under
+`<data-dir>/runs/<cycle-id>.log`. The real keys live in
 the Muse Secure Vault and are never in a file, a log, or an
 environment variable: the runtime swaps each `hsurr:` surrogate for
 the real key on egress. A failed cycle never fails the script: the
@@ -162,17 +174,97 @@ breakdown, markets covered, total rewards, the top 5 submissions by
 judgment reward, a per-cycle table, and the cycles that failed or
 left no record of completing.
 
+## Live Delphi client
+
+Ticket 08 wired the live client (`src/delphi/live.ts`), built from
+the official Delphi SDK (gensyn-ai/gensyn-delphi-sdk) — every
+endpoint, header, and response shape comes from that source, nothing
+is invented. The stub adapter stays as the no-key fallback, and
+`createDelphiAdapter` is still the one plug-in point: a configured
+key builds the live client, no key builds the stub.
+
+- **Reads** (`listMarkets`, `getMarket`): `https://delphi-api.gensyn.ai`,
+  header `X-API-Key` plus `X-Delphi-Mode: competition`. `health`
+  needs no authentication. The reads API does not return
+  `marketUrl`; the client builds it from the app URL, as the SDK
+  does. `pricesAndImpliedProbabilities` is refused outright: it
+  needs a signer and on-chain calls, which Vgen19 does not have.
+- **Evidence** (`submitEvidence`, plus `getSubmission`,
+  `listSubmissions`, `getEntryState`, `getLimits`, `getTerms`,
+  `acceptTerms`, `retrySubmission`, `waitForSubmission`):
+  `https://agent-competition.gensyn.ai/v1` (the SDK pattern
+  `<app domain>/v1`), header `Authorization: Bearer`. Submissions
+  are multipart FormData (`note`, `links[]`, `files`,
+  `marketAddress`) with an `Idempotency-Key` header.
+- **Receipts.** The parser accepts both the Vgen19 receipt shape
+  (stub/fakes) and the real `Submission` shape. Extra fields are
+  tolerated on both — the SDK says extra keys stay readable —
+  while missing or malformed required fields still fail loudly. A
+  judged submission's bounty `amount` is read as USDC.e base units
+  (6 decimals): that assumption is stated in
+  `src/delphi/evidence.ts`, and it is the one place to change if
+  the official guide says otherwise.
+- **Terms.** The evidence API returns 403 `terms_not_accepted`
+  until the account accepts the current terms. The client
+  implements `getTerms` and `acceptTerms`, but nothing in the agent
+  calls `acceptTerms` — accepting terms changes account state, so
+  the operator runs it once, at the opening, after reading the
+  terms. A 403 surfaces as `TermsNotAcceptedError` carrying the
+  version and URL to accept.
+- **Outcome sync.** The evidence API answers a submit with a
+  `queued` submission and judges it later, so each cycle refreshes
+  the stored submissions still awaiting judgment through
+  `getSubmission` (`syncSubmissionOutcomes`), updating the record
+  and the judgment reward once Delphi judges. A failed refresh is
+  recorded in the cycle's errors, never fatal. The settlement
+  reward is NOT fetched: the `Submission` shape carries only
+  `settlementUpTo` (the maximum, not an earned amount), and the
+  SDK exposes no field for the settlement amount actually paid.
+
+### The read placement caveat
+
+The Delphi API key is stored in the Muse Secure Vault with the
+placement `bearer_header`: the runtime swaps the surrogate for the
+real key on Bearer evidence calls. A surrogate placed by hand in
+`X-API-Key` for reads may reach Delphi unswapped. Verified
+21 November 2026: `health` works, but `listMarkets` returns 401
+`{"error":"invalid API key"}`, and Bearer alone returns 401
+`missing X-API-Key header` (the reads API ignores Bearer). **The
+key is not proven wrong.** The decisive test is the first Bearer
+call to a live evidence endpoint at the opening: if Bearer works,
+the key is valid and only the read placement needs fixing —
+register a second connection with placement
+`custom_header:X-API-Key` for read hosts and pass its key as
+`DELPHI_API_READ_KEY` (reads only; evidence still uses the main
+key as Bearer). If Bearer also 401s, the key itself is wrong. Do
+not ask for a new key before that test. A 401 on reads fails
+loudly with a pointer to this note.
+
+### Still unverified at the opening
+
+The live client is tested against mocked responses shaped by the
+SDK, not against the live API. At the opening, verify in this
+order: (1) the Bearer test — one evidence call (e.g. `getTerms`)
+to decide whether the key is valid; (2) a market read
+(`vgen19 markets`) to decide whether the read placement works or
+`DELPHI_API_READ_KEY` is needed; (3) a dry-run cycle with live
+reads; (4) one trial submit after terms are accepted. Also confirm
+the evidence base URL against the official guide — it comes from
+the SDK's example, not from a live check.
+
 ## Ticket 08 follow-ups
 
 These items wait for the official Delphi guide, published when the
 competition opens on 23 November 2026. Nothing here is invented:
 no endpoint, receipt shape, or leaderboard is guessed at.
 
-- **Settlement rewards.** `recordSettlementReward` exists and is
-  tested, but nothing calls it in production yet: the adapter has
-  no reward/settlement query, and neither the runner nor the
-  summary fetches settlement data. Ticket 08 wires the real
-  settlement query and calls it from the runner or the summary.
+- **Settlement rewards.** Partially done in ticket 08: the
+  outcome sync refreshes judged submissions and records their
+  judgment rewards, and `recordSettlementReward` exists and is
+  tested. What is still missing is the earned settlement amount
+  itself: the SDK exposes no field for it (only `settlementUpTo`,
+  the maximum), so settlement rewards still arrive by hand until
+  the official guide documents where the earned amount appears.
 - **OpenRouter fallback in scheduled runs.** ENABLED 22 Nov 2026:
   the OpenRouter credential is connected in the vault
   (`custom.openrouter`) and verified with a live call to
@@ -193,7 +285,9 @@ committed. Placeholder values only in `.env.example`.
 
 | Variable                        | Required | Default    | What it is                                              |
 | ------------------------------- | -------- | ---------- | ------------------------------------------------------- |
-| `DELPHI_API_KEY`                | Live only | —         | Delphi API key, available 23 Nov 2026                   |
+| `DELPHI_API_ACCESS_KEY`         | Live only | —         | Delphi API key (`DELPHI_API_KEY` works as an alias)     |
+| `DELPHI_API_READ_KEY`           | No       | —          | Separate key for Delphi reads only (placement escape hatch) |
+| `VGEN19_DELPHI_STUB`            | No       | `false`    | Skip the Delphi fetch in scheduled cycles; use the stub |
 | `GEMINI_API_KEY`                | No       | —          | Google AI Studio key, default model provider (free)     |
 | `GEMINI_FAST_MODEL`             | No       | `gemini-3.5-flash-lite` | Fast Gemini model: triage, extraction        |
 | `GEMINI_STRONG_MODEL`           | No       | `gemini-3.8-flash` | Strong Gemini model: drafting, judging        |
@@ -294,7 +388,7 @@ search, reader, and model only.
 Missing optional keys do not fail at startup. Instead, the code that needs
 a key calls `requireKey` at the point of use, which throws a clear error
 naming the missing variable (for example,
-`Missing required environment variable: DELPHI_API_KEY`). The agent never
+`Missing required environment variable: DELPHI_API_ACCESS_KEY`). The agent never
 runs a live step without the key that step needs. Invalid values (a
 non-boolean flag, a non-positive limit) fail at load time with an error
 naming the variable.
@@ -309,13 +403,13 @@ src/
   commands/   CLI subcommand handlers (markets, research, draft, submit, mine, summary)
   config.ts   Environment-based configuration
   cycle/      Mining cycle runner, market picking, trace, costs, report
-  delphi/     Delphi adapter boundary (interface, stub, fixtures, sync)
+  delphi/     Delphi adapter boundary (interface, live client, stub, fixtures, sync)
   draft/      Evidence drafting, validation, self-review judge
   llm/        Brain: model providers, routing, per-cycle budget
   memory/     Long-term JSON memory store
   research/   Researcher loop, notes, compaction, page reader
   search/     Search providers (Tavily, keyless fallback, fake)
-  submit/     Submission, receipts, rewards, approvals, refusals
+  submit/     Submission, receipts, rewards, outcome sync, approvals, refusals
   summary/    Final summary aggregator, run index reader, report
 scripts/      Scheduled-run script, schedule definition, surrogate helper
 test/         Vitest tests (one file per module)

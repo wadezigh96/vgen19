@@ -26,7 +26,7 @@ import {
 } from "../config.js";
 import { runCycle, type CycleDeps } from "../cycle/runner.js";
 import { formatCycleSummaryLine } from "../cycle/report.js";
-import { createDelphiAdapter } from "../delphi/index.js";
+import { createConfiguredDelphiAdapter } from "../delphi/index.js";
 import { createRoutedClient } from "../llm/client.js";
 import { MemoryStore } from "../memory/store.js";
 import { createPageReader } from "../research/index.js";
@@ -92,7 +92,13 @@ export function createMineCommand(
           }
           const store = new MemoryStore(config.dataDir);
           deps = {
-            adapter: createDelphiAdapter(),
+            adapter: createConfiguredDelphiAdapter(
+              primaryStrongModel(config),
+              {
+                apiKey: config.delphiApiKey,
+                readApiKey: config.delphiReadApiKey,
+              },
+            ),
             approvalGate: config.approvalGate,
             cycleId,
             cycleTimeBudgetMinutes: config.cycleTimeBudgetMinutes,

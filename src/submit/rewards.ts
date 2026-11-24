@@ -3,14 +3,15 @@
  * the submission that earned them, keyed by submission id.
  *
  * Judgment rewards arrive with the receipt and are recorded by the
- * submitter. Settlement rewards arrive later, when the market
- * settles the way the evidence pointed; `recordSettlementReward`
- * records one against its submission. No production caller fetches
- * settlement data yet: the reward-query endpoint is unknown until
- * the Delphi guide publishes (ticket 08).
- *
- * TODO(ticket 08): wire a settlement fetch (runner or summary) that
- * calls `recordSettlementReward` when settlement data arrives.
+ * submitter — or later, by the outcome sync (`outcomes.ts`, ticket
+ * 08), when a submission that was queued at send time gets judged.
+ * Settlement rewards arrive later, when the market settles the way
+ * the evidence pointed; `recordSettlementReward` records one
+ * against its submission. No production caller fetches settlement
+ * data yet: the SDK exposes no field for the earned settlement
+ * amount (only `settlementUpTo`, the maximum), so settlement data
+ * still arrives by hand until the official guide documents where
+ * the earned amount appears.
  */
 
 import type { MemoryStore } from "../memory/store.js";

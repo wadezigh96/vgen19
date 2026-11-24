@@ -36,10 +36,12 @@ export interface MarketMetadata {
 
 /**
  * Competition-2-only fields the spec needs: odds, reward pot, and
- * evidence cutoff. The public Delphi docs do not define them, so they
- * live in this optional extension, populated by the competition
- * endpoints in ticket 08. Until then they are present only on fixtures
- * that carry them, and absent everywhere else.
+ * evidence cutoff. The public Delphi docs do not define them, and
+ * the reads API does not return them, so they live in this optional
+ * extension. The SDK's starter agent reads them from the competition
+ * site's `/markets.json`, which the live client does not fetch yet —
+ * so they are present only on fixtures that carry them, and absent
+ * on live markets until that wiring lands.
  */
 export interface MarketCompetition {
   /** Probability-style odds for Yes. */
@@ -107,7 +109,8 @@ export interface Market {
   verifiable: boolean;
   /**
    * Competition-2-only fields (odds, reward pot, evidence cutoff).
-   * See `MarketCompetition`; absent until ticket 08 populates it.
+   * See `MarketCompetition`; absent on live markets until the
+   * `/markets.json` wiring lands.
    */
   competition?: MarketCompetition;
 }

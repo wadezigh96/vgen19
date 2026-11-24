@@ -25,6 +25,8 @@ export type TraceStep =
   | "cycle-end"
   /** Markets were synced from Delphi into memory. */
   | "market-sync"
+  /** Stored submissions awaiting judgment were refreshed from Delphi. */
+  | "submission-outcomes"
   /** Target markets were picked (picked plus skipped with reasons). */
   | "market-pick"
   /** Work on one market started. */
