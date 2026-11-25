@@ -13,8 +13,8 @@ import type { AgentIdentity } from "../src/delphi/types.js";
 import type { EvidenceDraft } from "../src/draft/types.js";
 
 const READS_BASE = "https://delphi-api.gensyn.ai";
-const EVIDENCE_BASE = "https://agent-competition.gensyn.ai/v1";
-const APP_URL = "https://agent-competition.gensyn.ai";
+const EVIDENCE_BASE = "https://delphi.fyi/v1";
+const APP_URL = "https://app.delphi.fyi";
 
 const IDENTITY: AgentIdentity = {
   agentName: "Vgen19",

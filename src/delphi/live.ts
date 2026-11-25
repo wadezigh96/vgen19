@@ -14,13 +14,15 @@
  *   NOT return `marketUrl`; the client builds it from the app URL,
  *   exactly as the SDK does.
  * - Evidence (`submitEvidence` and the `/v1` reads): the evidence
- *   API at `https://agent-competition.gensyn.ai/v1` (the SDK pattern
- *   `<app domain>/v1` with the competition app domain), authenticated
- *   with `Authorization: Bearer`. Submissions are multipart
- *   FormData (`note`, `links[]`, `files`, `marketAddress`) with an
- *   `Idempotency-Key` header. The evidence base URL comes from the
- *   SDK's example, not from a live check: confirm it against the
- *   official guide at the opening.
+ *   API at `https://delphi.fyi/v1` (competition.md v1.0: all 8
+ *   Evidence API routes live under `https://delphi.fyi/v1`),
+ *   authenticated with `Authorization: Bearer`. Submissions are
+ *   multipart FormData (`note`, `links[]`, `files`,
+ *   `marketAddress`) with an `Idempotency-Key` header. Confirmed
+ *   live 26 November 2026: the Mainnet key works (Bearer
+ *   `get_terms`/`get_limits` return 200; the old competition host
+ *   `agent-competition.gensyn.ai` is still behind Cloudflare
+ *   Access and is no longer the API host).
  *
  * THE PLACEMENT CAVEAT — read this before debugging a 401. The
  * Delphi API key is stored in the Muse Secure Vault with the
@@ -30,16 +32,18 @@
  * 21 November 2026: `health` works on both networks, but
  * `listMarkets` returns 401 `{"error":"invalid API key"}` on both,
  * and sending Bearer alone returns 401 `missing X-API-Key header`
- * (the reads API ignores Bearer). THE KEY IS NOT PROVEN WRONG:
- * the decisive test is the first Bearer call to a live evidence
- * endpoint at the opening (24 November 00:00 WIB). If Bearer
- * works, the key is valid and only the read placement needs
- * fixing — register a SECOND connection with placement
+ * (the reads API ignores Bearer). THE KEY IS NOW PROVEN
+ * VALID: the decisive Bearer test passed 26 November 2026
+ * (Mainnet key, `get_terms`/`get_limits` 200 on
+ * `https://delphi.fyi/v1`; account registered, terms v2026-11-18
+ * accepted). What is still unverified is whether the reads API
+ * accepts the Mainnet key in `X-API-Key`: if a cycle still 401s
+ * on reads, register a SECOND connection with placement
  * `custom_header:X-API-Key` for read hosts and pass its key as
- * `DELPHI_API_READ_KEY` (the escape hatch below). If Bearer also
- * 401s, the key itself is wrong. This client does NOT assume reads
- * work: it implements them exactly as the SDK specifies, and a 401
- * on reads fails loudly with a pointer to this note.
+ * `DELPHI_API_READ_KEY` (the escape hatch below). This client
+ * does NOT assume reads work: it implements them exactly as the
+ * SDK specifies, and a 401 on reads fails loudly with a pointer
+ * to this note.
  *
  * The escape hatch: `DELPHI_API_READ_KEY`, when set, is used for
  * reads ONLY (the `X-API-Key` header). Evidence calls always use
@@ -95,11 +99,10 @@ import type { AgentIdentity, Market, MarketStatus } from "./types.js";
 
 /** Reads base URL for the competition network (SDK default). */
 export const DELPHI_READS_BASE_URL = "https://delphi-api.gensyn.ai";
-/** Delphi app URL for the competition network (SDK default). */
-export const DELPHI_APP_URL = "https://agent-competition.gensyn.ai";
-/** Evidence base URL: `<app domain>/v1` (SDK pattern). */
-export const DELPHI_EVIDENCE_BASE_URL =
-  "https://agent-competition.gensyn.ai/v1";
+/** Delphi app URL for the Mainnet network (market links). */
+export const DELPHI_APP_URL = "https://app.delphi.fyi";
+/** Evidence base URL: `https://delphi.fyi/v1` (competition.md v1.0). */
+export const DELPHI_EVIDENCE_BASE_URL = "https://delphi.fyi/v1";
 
 const MARKET_STATUSES: readonly MarketStatus[] = [
   "open",
