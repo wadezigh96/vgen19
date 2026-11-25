@@ -121,7 +121,6 @@ export function createSubmitCommand(
           overrides.adapter ??
           createConfiguredDelphiAdapter(primaryStrongModel(config), {
             apiKey: config.delphiApiKey,
-            readApiKey: config.delphiReadApiKey,
           });
         const now = overrides.now ?? (() => new Date());
 

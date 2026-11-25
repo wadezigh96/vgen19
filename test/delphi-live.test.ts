@@ -9,12 +9,12 @@ import {
   TermsNotAcceptedError,
 } from "../src/delphi/evidence.js";
 import { LiveDelphiAdapter } from "../src/delphi/live.js";
+import { DELPHI_MARKETS_JSON_URL } from "../src/delphi/markets-json.js";
 import type { AgentIdentity } from "../src/delphi/types.js";
 import type { EvidenceDraft } from "../src/draft/types.js";
 
 const READS_BASE = "https://delphi-api.gensyn.ai";
 const EVIDENCE_BASE = "https://delphi.fyi/v1";
-const APP_URL = "https://app.delphi.fyi";
 
 const IDENTITY: AgentIdentity = {
   agentName: "Vgen19",
@@ -22,42 +22,28 @@ const IDENTITY: AgentIdentity = {
   model: "gemini-3.8-flash",
 };
 
-const MARKET_ID = "0x0000000000000000000000000000000000000001";
-const APP_MARKET_ID = "00000000-0000-4000-8000-000000000001";
+const MARKET_ID = "0x94dbba7c9b44b788a701602ab6d919ff7b7fc38a";
 
-/** One market exactly as the reads API returns it: no `marketUrl`. */
-function restMarket(overrides: Record<string, unknown> = {}) {
+/** One entry exactly as the public markets.json returns it. */
+function jsonEntry(overrides: Record<string, unknown> = {}) {
+  const address =
+    (overrides["address"] as string | undefined) ?? MARKET_ID;
   return {
-    appMarketId: APP_MARKET_ID,
-    category: "politics",
-    createdAt: "2026-11-18T09:00:00.000Z",
-    dataSources: ["https://example.invalid/sources/zanara"],
-    deployer: "0x00000000000000000000000000000000000000d1",
-    error: null,
-    fetchedAt: "2026-11-20T00:00:00.000Z",
-    fetchResponseStatus: "200",
-    id: MARKET_ID,
-    implementation: "0x00000000000000000000000000000000000000a1",
-    metadata: {
-      category: "politics",
-      description: "A fictional election market used only in tests.",
-      endDate: "2026-12-31T00:00:00.000Z",
-      outcomes: ["Yes", "No"],
-      question: "Will the Republic of Zanara hold a general election?",
-      resolutionCriteria: "The Zanara Election Commission announces a date.",
-      title: "Zanara general election",
-    },
-    metadataUri: "https://example.invalid/metadata/zanara.json",
-    metadataUriContentHash:
-      "0x0000000000000000000000000000000000000000000000000000000000000001",
-    proof: null,
-    resolvesAt: null,
-    settledAt: null,
-    settlesAt: "2027-01-07T00:00:00.000Z",
+    address,
+    category: "votes_government",
+    closesAt: "2026-11-29T06:00:00.000Z",
+    dataSources: ["https://www.bk.admin.ch"],
+    delphiUrl: `https://delphi.fyi/market/${address}`,
+    evidenceCutoffAt: "2026-11-28T06:00:00.000Z",
+    marketTier: "A",
+    odds: { no: 0.483944, yes: 0.516056 },
+    pots: { judgement: "20000000", settlement: "30000000" },
+    question:
+      "Will turnout in Switzerland's federal vote of Nov 29, 2026 be at least 50.0%, per the Federal Chancellery?",
+    resolutionCriteria: "The Federal Chancellery's official turnout figure.",
+    settled: null,
     status: "open",
-    tradingFee: null,
-    verifiable: true,
-    winningOutcomeIdx: null,
+    wave: 1,
     ...overrides,
   };
 }
@@ -132,14 +118,12 @@ function makeClient(
   fetchFn: typeof fetch,
   overrides: Partial<{
     apiKey: string;
-    readApiKey: string;
   }> = {},
 ): LiveDelphiAdapter {
   return new LiveDelphiAdapter({
     apiKey: overrides.apiKey ?? "test-delphi-key",
     fetch: fetchFn,
     identity: IDENTITY,
-    readApiKey: overrides.readApiKey,
   });
 }
 
@@ -175,11 +159,11 @@ describe("LiveDelphiAdapter construction", () => {
   });
 });
 
-describe("LiveDelphiAdapter reads", () => {
-  it("lists markets with the SDK headers and builds marketUrl", async () => {
+describe("LiveDelphiAdapter market listing", () => {
+  it("lists markets from the public markets.json with the competition extension", async () => {
     const { calls, fetchFn } = stubFetch((url) => {
-      expect(url).toBe(`${READS_BASE}/markets`);
-      return jsonResponse({ markets: [restMarket()] });
+      expect(url).toBe(DELPHI_MARKETS_JSON_URL);
+      return jsonResponse([jsonEntry()]);
     });
     const client = makeClient(fetchFn);
 
@@ -188,60 +172,74 @@ describe("LiveDelphiAdapter reads", () => {
     expect(markets).toHaveLength(1);
     expect(markets[0]!.id).toBe(MARKET_ID);
     expect(markets[0]!.marketUrl).toBe(
-      `${APP_URL}/market/${APP_MARKET_ID}`,
+      `https://delphi.fyi/market/${MARKET_ID}`,
     );
+    expect(markets[0]!.category).toBe("votes_government");
+    expect(markets[0]!.metadata?.question).toContain("Switzerland");
+    expect(markets[0]!.competition?.oddsYes).toBe(0.516056);
+    expect(markets[0]!.competition?.oddsNo).toBe(0.483944);
+    expect(markets[0]!.competition?.judgementPot).toBe(20);
+    expect(markets[0]!.competition?.settlementPot).toBe(30);
+    expect(markets[0]!.competition?.rewardPot).toBe(50);
+    expect(markets[0]!.competition?.evidenceCutoff).toBe(
+      "2026-11-28T06:00:00.000Z",
+    );
+    expect(markets[0]!.competition?.tier).toBe("A");
     const headers = headersOf(calls[0]!);
-    expect(headers.get("X-API-Key")).toBe("test-delphi-key");
-    expect(headers.get("X-Delphi-Mode")).toBe("competition");
     expect(headers.get("Accept")).toBe("application/json");
     expect(headers.get("Authorization")).toBeNull();
+    expect(headers.get("X-API-Key")).toBeNull();
   });
 
-  it("passes list filters and pagination as query parameters", async () => {
-    const { calls, fetchFn } = stubFetch(() => jsonResponse({ markets: [] }));
+  it("applies category filter and pagination locally", async () => {
+    const entries = [
+      jsonEntry({
+        address: "0x00000000000000000000000000000000000000a1",
+        category: "crypto",
+      }),
+      jsonEntry({
+        address: "0x00000000000000000000000000000000000000b2",
+        category: "politics",
+      }),
+      jsonEntry({
+        address: "0x00000000000000000000000000000000000000c3",
+        category: "crypto",
+      }),
+    ];
+    const { fetchFn } = stubFetch(() => jsonResponse(entries));
     const client = makeClient(fetchFn);
 
-    await client.listMarkets({
+    const page = await client.listMarkets({
       category: "crypto",
-      competitionId: "comp-2",
-      limit: 10,
-      orderBy: "created",
-      skip: 5,
-      status: "open",
-      verifiable: true,
+      limit: 1,
+      skip: 1,
     });
+    expect(page.map((market) => market.id)).toEqual([
+      "0x00000000000000000000000000000000000000c3",
+    ]);
 
-    const url = new URL(calls[0]!.url);
-    expect(url.origin + url.pathname).toBe(`${READS_BASE}/markets`);
-    expect(url.searchParams.get("category")).toBe("crypto");
-    expect(url.searchParams.get("competitionId")).toBe("comp-2");
-    expect(url.searchParams.get("limit")).toBe("10");
-    expect(url.searchParams.get("orderBy")).toBe("created");
-    expect(url.searchParams.get("skip")).toBe("5");
-    expect(url.searchParams.get("status")).toBe("open");
-    expect(url.searchParams.get("verifiable")).toBe("true");
+    const firstTwo = await client.listMarkets({ limit: 2 });
+    expect(firstTwo.map((market) => market.id)).toEqual([
+      "0x00000000000000000000000000000000000000a1",
+      "0x00000000000000000000000000000000000000b2",
+    ]);
+
+    // The public list only carries open markets, so any other status
+    // matches nothing.
+    await expect(client.listMarkets({ status: "settled" })).resolves.toEqual(
+      [],
+    );
   });
 
-  it("returns an empty list when the API returns null markets", async () => {
-    const { fetchFn } = stubFetch(() => jsonResponse({ markets: null }));
+  it("returns an empty list when the JSON list is empty", async () => {
+    const { fetchFn } = stubFetch(() => jsonResponse([]));
     const client = makeClient(fetchFn);
 
     await expect(client.listMarkets()).resolves.toEqual([]);
   });
 
-  it("uses the read key for reads when one is configured", async () => {
-    const { calls, fetchFn } = stubFetch(() =>
-      jsonResponse({ markets: [restMarket()] }),
-    );
-    const client = makeClient(fetchFn, { readApiKey: "read-only-key" });
-
-    await client.listMarkets();
-
-    expect(headersOf(calls[0]!).get("X-API-Key")).toBe("read-only-key");
-  });
-
   it("refuses on-chain price enrichment: it needs a signer Vgen19 has not got", async () => {
-    const { calls, fetchFn } = stubFetch(() => jsonResponse({ markets: [] }));
+    const { calls, fetchFn } = stubFetch(() => jsonResponse([jsonEntry()]));
     const client = makeClient(fetchFn);
 
     await expect(
@@ -250,42 +248,31 @@ describe("LiveDelphiAdapter reads", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("fails loudly on a 401 read, pointing at the read-key placement", async () => {
-    const { fetchFn } = stubFetch(() =>
-      jsonResponse({ error: "invalid API key" }, 401),
-    );
-    const client = makeClient(fetchFn);
-
-    await expect(client.listMarkets()).rejects.toThrow(/invalid API key/i);
-    await expect(client.listMarkets()).rejects.toThrow(
-      /DELPHI_API_READ_KEY|read key|placement/i,
-    );
-  });
-
-  it("never puts the API key in an error message", async () => {
-    const { fetchFn } = stubFetch(() =>
-      jsonResponse({ error: "invalid API key" }, 401),
+  it("fails loudly when the markets.json fetch fails", async () => {
+    const { fetchFn } = stubFetch(
+      () => new Response("bad gateway", { status: 502 }),
     );
     const client = makeClient(fetchFn);
 
     const error = await client
       .listMarkets()
       .catch((caught: unknown) => caught);
-    expect((error as Error).message).not.toContain("test-delphi-key");
+    expect((error as Error).message).toMatch(/502/);
+    expect((error as Error).message).toMatch(/markets\.json/);
   });
 
-  it("fails loudly when a market is missing its id", async () => {
-    const { fetchFn } = stubFetch(() =>
-      jsonResponse({ markets: [restMarket({ id: undefined })] }),
-    );
+  it("fails loudly when a market entry is missing its address", async () => {
+    const entry = jsonEntry();
+    delete (entry as Record<string, unknown>)["address"];
+    const { fetchFn } = stubFetch(() => jsonResponse([entry]));
     const client = makeClient(fetchFn);
 
-    await expect(client.listMarkets()).rejects.toThrow(/id/i);
+    await expect(client.listMarkets()).rejects.toThrow(/address/i);
   });
 
   it("fails loudly on a malformed list response", async () => {
-    const { fetchFn } = stubFetch(
-      () => new Response(JSON.stringify("not-an-object"), { status: 200 }),
+    const { fetchFn } = stubFetch(() =>
+      jsonResponse({ markets: [jsonEntry()] }),
     );
     const client = makeClient(fetchFn);
 
@@ -301,44 +288,53 @@ describe("LiveDelphiAdapter reads", () => {
     await expect(client.listMarkets()).rejects.toThrow(/not JSON/i);
   });
 
-  it("fails loudly on an unknown market status", async () => {
+  it("skips entries whose status is not open instead of failing", async () => {
     const { fetchFn } = stubFetch(() =>
-      jsonResponse({ markets: [restMarket({ status: "mystery" })] }),
+      jsonResponse([
+        jsonEntry(),
+        jsonEntry({
+          address: "0x00000000000000000000000000000000000000d4",
+          status: "settled",
+        }),
+        jsonEntry({
+          address: "0x00000000000000000000000000000000000000e5",
+          status: "mystery",
+        }),
+      ]),
     );
     const client = makeClient(fetchFn);
 
-    await expect(client.listMarkets()).rejects.toThrow(/status.*mystery/i);
+    const markets = await client.listMarkets();
+
+    expect(markets).toHaveLength(1);
+    expect(markets[0]!.id).toBe(MARKET_ID);
   });
 
-  it("reads one market by id, with the competition id passed through", async () => {
+  it("reads one market by id from the list", async () => {
     const { calls, fetchFn } = stubFetch((url) => {
-      expect(url).toContain(`${READS_BASE}/markets/${MARKET_ID}`);
-      return jsonResponse(restMarket());
+      expect(url).toBe(DELPHI_MARKETS_JSON_URL);
+      return jsonResponse([jsonEntry()]);
     });
     const client = makeClient(fetchFn);
 
-    const market = await client.getMarket({
-      competitionId: "comp-2",
-      id: MARKET_ID,
-    });
+    const market = await client.getMarket({ id: MARKET_ID });
 
     expect(market.id).toBe(MARKET_ID);
-    expect(market.marketUrl).toBe(`${APP_URL}/market/${APP_MARKET_ID}`);
-    expect(new URL(calls[0]!.url).searchParams.get("competitionId")).toBe(
-      "comp-2",
+    expect(market.marketUrl).toBe(
+      `https://delphi.fyi/market/${MARKET_ID}`,
     );
-    expect(headersOf(calls[0]!).get("X-API-Key")).toBe("test-delphi-key");
+    expect(headersOf(calls[0]!).get("X-API-Key")).toBeNull();
   });
 
-  it("names the market id on a 404 read", async () => {
-    const { fetchFn } = stubFetch(() =>
-      jsonResponse({ error: "market not found" }, 404),
-    );
+  it("names the market id when it is not in the list", async () => {
+    const { fetchFn } = stubFetch(() => jsonResponse([jsonEntry()]));
     const client = makeClient(fetchFn);
 
-    await expect(client.getMarket({ id: MARKET_ID })).rejects.toThrow(
-      new RegExp(MARKET_ID),
-    );
+    await expect(
+      client.getMarket({
+        id: "0x00000000000000000000000000000000000000ff",
+      }),
+    ).rejects.toThrow(/0x00000000000000000000000000000000000000ff/);
   });
 
   it("checks health with no authentication headers at all", async () => {

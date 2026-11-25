@@ -289,27 +289,57 @@ describe("createDelphiAdapter", () => {
     expect(adapter.identity.agentName).toBe("Vgen19");
   });
 
-  it("passes the read key through to the live client's reads", async () => {
-    const seenKeys: Array<string | null> = [];
+  it("lists markets from the public markets.json with no API key", async () => {
+    const seen: Array<{ headers: Headers; url: string }> = [];
     const fetchFn = (async (
       _input: string | URL | Request,
       init?: RequestInit,
     ): Promise<Response> => {
-      seenKeys.push(new Headers(init?.headers).get("X-API-Key"));
-      return new Response(JSON.stringify({ markets: [] }), {
-        headers: { "Content-Type": "application/json" },
-        status: 200,
+      seen.push({
+        headers: new Headers(init?.headers),
+        url: typeof _input === "string" ? _input : _input.toString(),
       });
+      return new Response(
+        JSON.stringify([
+          {
+            address: "0x94dbba7c9b44b788a701602ab6d919ff7b7fc38a",
+            category: "votes_government",
+            closesAt: "2026-11-29T06:00:00.000Z",
+            delphiUrl:
+              "https://delphi.fyi/market/0x94dbba7c9b44b788a701602ab6d919ff7b7fc38a",
+            evidenceCutoffAt: "2026-11-28T06:00:00.000Z",
+            marketTier: "A",
+            odds: { no: 0.483944, yes: 0.516056 },
+            pots: { judgement: "20000000", settlement: "30000000" },
+            question:
+              "Will turnout in Switzerland's federal vote of Nov 29, 2026 be at least 50.0%?",
+            resolutionCriteria:
+              "The Federal Chancellery's official turnout figure.",
+            status: "open",
+            wave: 1,
+          },
+        ]),
+        {
+          headers: { "Content-Type": "application/json" },
+          status: 200,
+        },
+      );
     }) as unknown as typeof fetch;
     const adapter = createDelphiAdapter(undefined, {
       apiKey: "test-delphi-key",
       fetch: fetchFn,
-      readApiKey: "read-only-key",
     });
 
-    await adapter.listMarkets();
+    const markets = await adapter.listMarkets();
 
-    expect(seenKeys).toEqual(["read-only-key"]);
+    expect(markets).toHaveLength(1);
+    expect(markets[0]!.competition?.rewardPot).toBe(50);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.url).toBe(
+      "https://competition.delphi.fyi/markets.json",
+    );
+    expect(seen[0]!.headers.get("Authorization")).toBeNull();
+    expect(seen[0]!.headers.get("X-API-Key")).toBeNull();
   });
 
   it("keeps the explicit identity on the live client", () => {

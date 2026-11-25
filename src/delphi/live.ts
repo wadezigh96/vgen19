@@ -6,13 +6,16 @@
  *
  * Two APIs, one key, two placements:
  *
- * - Reads (`listMarkets`, `getMarket`): the reads API at
- *   `https://delphi-api.gensyn.ai`, authenticated with the
- *   `X-API-Key` header plus `X-Delphi-Mode: competition` (the SDK
- *   sends the mode header automatically for competition networks).
- *   `health` needs no authentication at all. The reads API does
- *   NOT return `marketUrl`; the client builds it from the app URL,
- *   exactly as the SDK does.
+ * - Market listing (`listMarkets`, `getMarket`): the public market
+ *   list at `https://competition.delphi.fyi/markets.json` — the same
+ *   list as the competition grid, per competition.md v1.0. The file
+ *   is public and needs no authentication, so no API key is sent.
+ *   See `markets-json.ts`. The reads API at
+ *   `https://delphi-api.gensyn.ai` is NOT used for markets: it
+ *   returns HTTP 401 `{"error":"invalid API key"}` for
+ *   `listMarkets` and `getMarket` with the Mainnet key (verified
+ *   26 November 2026). It serves only the unauthenticated `health`
+ *   check now.
  * - Evidence (`submitEvidence` and the `/v1` reads): the evidence
  *   API at `https://delphi.fyi/v1` (competition.md v1.0: all 8
  *   Evidence API routes live under `https://delphi.fyi/v1`),
@@ -24,31 +27,19 @@
  *   `agent-competition.gensyn.ai` is still behind Cloudflare
  *   Access and is no longer the API host).
  *
- * THE PLACEMENT CAVEAT — read this before debugging a 401. The
- * Delphi API key is stored in the Muse Secure Vault with the
- * placement `bearer_header`: the runtime swaps the surrogate for
- * the real key on Bearer evidence calls. A surrogate placed by hand
- * in `X-API-Key` for reads may reach Delphi unswapped. Verified
- * 21 November 2026: `health` works on both networks, but
- * `listMarkets` returns 401 `{"error":"invalid API key"}` on both,
- * and sending Bearer alone returns 401 `missing X-API-Key header`
- * (the reads API ignores Bearer). THE KEY IS NOW PROVEN
- * VALID: the decisive Bearer test passed 26 November 2026
- * (Mainnet key, `get_terms`/`get_limits` 200 on
- * `https://delphi.fyi/v1`; account registered, terms v2026-11-18
- * accepted). What is still unverified is whether the reads API
- * accepts the Mainnet key in `X-API-Key`: if a cycle still 401s
- * on reads, register a SECOND connection with placement
- * `custom_header:X-API-Key` for read hosts and pass its key as
- * `DELPHI_API_READ_KEY` (the escape hatch below). This client
- * does NOT assume reads work: it implements them exactly as the
- * SDK specifies, and a 401 on reads fails loudly with a pointer
- * to this note.
- *
- * The escape hatch: `DELPHI_API_READ_KEY`, when set, is used for
- * reads ONLY (the `X-API-Key` header). Evidence calls always use
- * the main key as Bearer. The two keys may be the same value or
- * different connections.
+ * THE READS API IS DEAD FOR THIS ACCOUNT — read this before
+ * debugging a 401. The reads API (`delphi-api.gensyn.ai`) rejects
+ * the Mainnet key with 401 `{"error":"invalid API key"}` on
+ * `listMarkets` and `getMarket` (verified 26 November 2026), so
+ * market listing reads the public markets.json instead and sends no
+ * key at all. Do NOT "fix" a listing failure by wiring a second
+ * read connection: the listing does not use the reads API. The key
+ * itself is proven valid: Bearer calls to the evidence API
+ * (`https://delphi.fyi/v1`) return 200 (account registered, terms
+ * v2026-11-18 accepted 26 November 2026). There is no read-key
+ * option anymore (`DELPHI_API_READ_KEY` was removed with the reads
+ * listing): if the reads API ever revives, add the wiring then —
+ * do not pre-emptively reintroduce it.
  *
  * Terms: the evidence API returns 403 `terms_not_accepted` until
  * the account accepts the current terms. This client implements
@@ -64,12 +55,10 @@
  * markets without prices.
  *
  * Competition-only fields (odds, reward pot, evidence cutoff) do
- * NOT come from the reads API: the SDK's starter agent reads them
- * from the competition site's `/markets.json`. This client does
- * not fetch that file yet, so live markets carry no competition
- * extension until that wiring lands — picking works without it
- * (odds and cutoffs show as n/a), it just cannot prefer markets
- * by odds or skip past-cutoff markets.
+ * NOT come from the reads API: the client reads them from the
+ * competition site's public `/markets.json` (`markets-json.ts`), so
+ * live markets carry the competition extension (odds, pots,
+ * evidence cutoff, tier, wave).
  */
 
 import { randomUUID } from "node:crypto";
@@ -95,22 +84,17 @@ import {
   type SubmissionSummary,
   type TermsAcceptance,
 } from "./evidence.js";
-import type { AgentIdentity, Market, MarketStatus } from "./types.js";
+import {
+  DELPHI_MARKETS_JSON_URL,
+  fetchMarketsJson,
+  MarketsJsonError,
+} from "./markets-json.js";
+import type { AgentIdentity, Market } from "./types.js";
 
 /** Reads base URL for the competition network (SDK default). */
 export const DELPHI_READS_BASE_URL = "https://delphi-api.gensyn.ai";
-/** Delphi app URL for the Mainnet network (market links). */
-export const DELPHI_APP_URL = "https://app.delphi.fyi";
 /** Evidence base URL: `https://delphi.fyi/v1` (competition.md v1.0). */
 export const DELPHI_EVIDENCE_BASE_URL = "https://delphi.fyi/v1";
-
-const MARKET_STATUSES: readonly MarketStatus[] = [
-  "open",
-  "awaiting_settlement",
-  "settled",
-  "expired",
-  "failed",
-];
 
 /** An error the reads API returned (or a malformed reads response). */
 export class DelphiReadError extends Error {
@@ -125,24 +109,19 @@ export class DelphiReadError extends Error {
 
 export interface LiveDelphiClientOptions {
   /**
-   * The Delphi API key: Bearer for evidence calls, `X-API-Key` for
-   * reads (unless `readApiKey` is set). From `DELPHI_API_ACCESS_KEY`
-   * (`DELPHI_API_KEY` also works as an alias).
+   * The Delphi API key: Bearer for evidence calls. Market listing
+   * reads the public markets.json and sends no key. From
+   * `DELPHI_API_ACCESS_KEY` (`DELPHI_API_KEY` also works as an alias).
    */
   apiKey: string;
-  /**
-   * Optional separate key for reads only (the placement escape
-   * hatch). From `DELPHI_API_READ_KEY` when set.
-   */
-  readApiKey?: string;
   /** The identity sent with every request. */
   identity: AgentIdentity;
-  /** Reads base URL. Defaults to the competition network. */
+  /** Reads base URL, used only by the unauthenticated health check. */
   readsBaseUrl?: string;
   /** Evidence base URL, including `/v1`. Defaults to the competition network. */
   evidenceBaseUrl?: string;
-  /** Delphi app URL, used to build `marketUrl`. Defaults to the competition network. */
-  appUrl?: string;
+  /** Public markets.json URL override for tests. */
+  marketsJsonUrl?: string;
   /** Fetch override for tests. Defaults to the global fetch. */
   fetch?: typeof fetch;
 }
@@ -214,10 +193,9 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 export class LiveDelphiAdapter implements DelphiAdapter {
   readonly identity: AgentIdentity;
   private readonly apiKey: string;
-  private readonly readApiKey: string;
   private readonly readsBase: string;
   private readonly evidenceBase: string;
-  private readonly appUrl: string;
+  private readonly marketsJsonUrl: string;
   private readonly fetchFn: typeof fetch;
   private readonly evidenceHeaders: Record<string, string>;
 
@@ -230,8 +208,6 @@ export class LiveDelphiAdapter implements DelphiAdapter {
       );
     }
     this.apiKey = apiKey;
-    const readApiKey = options.readApiKey?.trim() ?? "";
-    this.readApiKey = readApiKey === "" ? apiKey : readApiKey;
     this.identity = options.identity;
     this.readsBase = (options.readsBaseUrl ?? DELPHI_READS_BASE_URL).replace(
       /\/+$/,
@@ -240,7 +216,9 @@ export class LiveDelphiAdapter implements DelphiAdapter {
     this.evidenceBase = (
       options.evidenceBaseUrl ?? DELPHI_EVIDENCE_BASE_URL
     ).replace(/\/+$/, "");
-    this.appUrl = (options.appUrl ?? DELPHI_APP_URL).replace(/\/+$/, "");
+    this.marketsJsonUrl = (
+      options.marketsJsonUrl ?? DELPHI_MARKETS_JSON_URL
+    ).replace(/\/+$/, "");
     this.fetchFn = options.fetch ?? fetch;
     this.evidenceHeaders = {
       Accept: "application/json",
@@ -251,6 +229,15 @@ export class LiveDelphiAdapter implements DelphiAdapter {
     };
   }
 
+  /**
+   * Read the competition market list from the public markets.json.
+   * The file is fetched whole on every call and the filters are
+   * applied locally: the list is small (27 markets at wave 1) and
+   * the sync stops after the first short page, so one fetch per
+   * sync is the normal case. `orderBy` and `competitionId` are
+   * ignored — the file is the single competition list in the
+   * competition's own order. No API key is sent: the file is public.
+   */
   async listMarkets(params: ListMarketsParams = {}): Promise<Market[]> {
     if (params.pricesAndImpliedProbabilities === true) {
       throw new Error(
@@ -259,57 +246,51 @@ export class LiveDelphiAdapter implements DelphiAdapter {
           "makes on-chain calls. Call listMarkets without it.",
       );
     }
-    const response = await this.readsGet<unknown>("/markets", {
-      category: params.category,
-      competitionId: params.competitionId,
-      limit: params.limit,
-      orderBy: params.orderBy,
-      skip: params.skip,
-      status: params.status,
-      verifiable: params.verifiable,
-    });
-    if (
-      typeof response !== "object" ||
-      response === null ||
-      Array.isArray(response)
-    ) {
-      throw new DelphiReadError(
-        "Delphi listMarkets returned a malformed response: " +
-          "expected an object with a `markets` list.",
-      );
-    }
-    const markets =
-      (response as { markets?: unknown }).markets ?? null;
-    if (markets === null) {
+    const markets = await fetchMarketsJson(
+      this.fetchFn,
+      this.marketsJsonUrl,
+    );
+    if (params.status !== undefined && params.status !== "open") {
+      // The public list only carries open markets (non-open entries
+      // are skipped at parse time), so any other status matches nothing.
       return [];
     }
-    if (!Array.isArray(markets)) {
-      throw new DelphiReadError(
-        "Delphi listMarkets returned a malformed response: `markets` is not a list.",
+    let result = markets;
+    if (params.category !== undefined) {
+      result = result.filter(
+        (market) => market.category === params.category,
       );
     }
-    return markets.map((market, index) => this.parseMarket(market, index));
+    if (params.verifiable === true) {
+      // markets.json states no verifiability, so no market in the
+      // list is known-verifiable.
+      return [];
+    }
+    const skip = params.skip ?? 0;
+    const limit = params.limit;
+    return result.slice(
+      skip,
+      limit === undefined ? undefined : skip + limit,
+    );
   }
 
+  /**
+   * Read one market by its contract address from the public
+   * markets.json. `competitionId` is ignored: the file is the single
+   * competition list.
+   */
   async getMarket(params: GetMarketParams): Promise<Market> {
-    let response: unknown;
-    try {
-      response = await this.readsGet<unknown>(
-        `/markets/${encodeURIComponent(params.id)}`,
-        params.competitionId !== undefined
-          ? { competitionId: params.competitionId }
-          : undefined,
+    const markets = await fetchMarketsJson(
+      this.fetchFn,
+      this.marketsJsonUrl,
+    );
+    const market = markets.find((candidate) => candidate.id === params.id);
+    if (market === undefined) {
+      throw new MarketsJsonError(
+        `Delphi markets.json has no open market with id ${params.id}.`,
       );
-    } catch (error) {
-      if (error instanceof DelphiReadError) {
-        throw new DelphiReadError(
-          `Reading market ${params.id} failed: ${error.message}`,
-          error.status,
-        );
-      }
-      throw error;
     }
-    return this.parseMarket(response, 0);
+    return market;
   }
 
   async health(): Promise<{ status: string }> {
@@ -482,75 +463,6 @@ export class LiveDelphiAdapter implements DelphiAdapter {
     }
   }
 
-  /**
-   * Validate one market from the reads API and build its `marketUrl`
-   * (the API does not return one; the SDK builds it the same way).
-   * Only the fields the agent reasons about are validated — `id`,
-   * `appMarketId`, `status` — so a new API field never breaks the
-   * sync, but a market missing its identity fails loudly instead of
-   * poisoning the store.
-   */
-  private parseMarket(value: unknown, index: number): Market {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      throw new DelphiReadError(
-        `Delphi returned a market that is not an object (index ${index}).`,
-      );
-    }
-    const record = value as Record<string, unknown>;
-    const id = record["id"];
-    if (typeof id !== "string" || id === "") {
-      throw new DelphiReadError(
-        `Delphi returned a market without an id (index ${index}).`,
-      );
-    }
-    const appMarketId = record["appMarketId"];
-    if (typeof appMarketId !== "string" || appMarketId === "") {
-      throw new DelphiReadError(
-        `Delphi returned market ${id} without an appMarketId.`,
-      );
-    }
-    const status = record["status"];
-    if (
-      typeof status !== "string" ||
-      !(MARKET_STATUSES as readonly string[]).includes(status)
-    ) {
-      throw new DelphiReadError(
-        `Delphi returned market ${id} with an unknown status: ${String(status)}.`,
-      );
-    }
-    return {
-      ...(record as unknown as Market),
-      marketUrl: `${this.appUrl}/market/${appMarketId}`,
-    };
-  }
-
-  private async readsGet<T>(
-    path: string,
-    query?: Record<string, string | number | boolean | undefined>,
-  ): Promise<T> {
-    const url = new URL(path, this.readsBase);
-    if (query !== undefined) {
-      for (const [key, value] of Object.entries(query)) {
-        if (value !== undefined && value !== null) {
-          url.searchParams.set(key, String(value));
-        }
-      }
-    }
-    const response = await this.fetchFn(url.toString(), {
-      headers: {
-        Accept: "application/json",
-        "X-API-Key": this.readApiKey,
-        "X-Delphi-Mode": "competition",
-      },
-      method: "GET",
-    });
-    const text = await response.text();
-    if (!response.ok) {
-      throw this.readsError(response.status, text);
-    }
-    return this.parseReadsJson<T>(text, `GET ${path}`);
-  }
-
   private parseReadsJson<T>(text: string, what: string): T {
     try {
       return JSON.parse(text) as T;
@@ -559,27 +471,6 @@ export class LiveDelphiAdapter implements DelphiAdapter {
         `Delphi returned a response that is not JSON for ${what}: ${text.slice(0, 200)}`,
       );
     }
-  }
-
-  private readsError(status: number, body: string): DelphiReadError {
-    let detail = body.slice(0, 200);
-    try {
-      const json = JSON.parse(body) as { error?: unknown };
-      if (typeof json?.error === "string" && json.error !== "") {
-        detail = json.error;
-      }
-    } catch {
-      // Plain-text body: keep the raw text.
-    }
-    let message = `Delphi read failed (${status}): ${detail}`;
-    if (status === 401) {
-      message +=
-        " The read key was rejected — but the key may still be valid " +
-        "for Bearer evidence calls: reads and evidence use different " +
-        "placements (see the placement note in src/delphi/live.ts), " +
-        "and DELPHI_API_READ_KEY can carry a separate read key.";
-    }
-    return new DelphiReadError(message, status);
   }
 
   private async evidenceRequest<T>(

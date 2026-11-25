@@ -48,7 +48,6 @@ export const marketsCommand: CliCommand = {
         primaryStrongModel(config),
         {
           apiKey: config.delphiApiKey,
-          readApiKey: config.delphiReadApiKey,
         },
       );
       const store = new MemoryStore(config.dataDir);

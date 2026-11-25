@@ -42,13 +42,18 @@ export {
 } from "./evidence.js";
 export { fixtureMarkets } from "./fixtures.js";
 export {
-  DELPHI_APP_URL,
   DELPHI_EVIDENCE_BASE_URL,
   DELPHI_READS_BASE_URL,
   DelphiReadError,
   LiveDelphiAdapter,
   type LiveDelphiClientOptions,
 } from "./live.js";
+export {
+  DELPHI_MARKETS_JSON_URL,
+  fetchMarketsJson,
+  MarketsJsonError,
+  parseMarketsJson,
+} from "./markets-json.js";
 export { STUB_IDENTITY, StubDelphiAdapter } from "./stub.js";
 export type { RecordedSubmission } from "./stub.js";
 export {
@@ -76,19 +81,14 @@ export interface CreateDelphiAdapterOptions {
    * (`DELPHI_API_KEY` also works as an alias).
    */
   apiKey?: string;
-  /**
-   * Optional separate key for reads only (the placement escape
-   * hatch). From `DELPHI_API_READ_KEY` when set.
-   */
-  readApiKey?: string;
   /** Fetch override for tests. Defaults to the global fetch. */
   fetch?: typeof fetch;
   /** Reads base URL override for the live client. */
   readsBaseUrl?: string;
   /** Evidence base URL override for the live client. */
   evidenceBaseUrl?: string;
-  /** Delphi app URL override for the live client. */
-  appUrl?: string;
+  /** Public markets.json URL override for the live client. */
+  marketsJsonUrl?: string;
 }
 
 /**
@@ -106,11 +106,10 @@ export function createDelphiAdapter(
   }
   return new LiveDelphiAdapter({
     apiKey,
-    appUrl: options.appUrl,
     evidenceBaseUrl: options.evidenceBaseUrl,
     fetch: options.fetch,
     identity,
-    readApiKey: options.readApiKey,
+    marketsJsonUrl: options.marketsJsonUrl,
     readsBaseUrl: options.readsBaseUrl,
   });
 }

@@ -96,7 +96,6 @@ export function createMineCommand(
               primaryStrongModel(config),
               {
                 apiKey: config.delphiApiKey,
-                readApiKey: config.delphiReadApiKey,
               },
             ),
             approvalGate: config.approvalGate,
